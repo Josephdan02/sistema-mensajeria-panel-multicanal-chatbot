@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Services\External\AI\AIServiceInterface;
 use App\Services\External\AI\GeminiAIService;
 use App\Services\External\Agenda\AgendaServiceInterface;
+use App\Services\External\Agenda\ApiAgendaService;
 use App\Services\External\Agenda\MockAgendaService;
 use App\Services\External\WhatsApp\MockWhatsAppService;
 use App\Services\External\WhatsApp\WhatsAppServiceInterface;
@@ -26,7 +27,12 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(IntentDetectorInterface::class, RuleBasedIntentDetector::class);
-        $this->app->singleton(AgendaServiceInterface::class, MockAgendaService::class);
+        $agendaService = strtolower(trim((string) config('services.clinic_agenda.driver', 'mock')));
+        $agendaImplementation = $agendaService === 'api'
+            ? ApiAgendaService::class
+            : MockAgendaService::class;
+
+        $this->app->singleton(AgendaServiceInterface::class, $agendaImplementation);
         $this->app->bind(WhatsAppServiceInterface::class, MockWhatsAppService::class);
         $this->app->bind(AIServiceInterface::class, GeminiAIService::class);
         $this->app->bind(ServiceExtractorInterface::class, RuleBasedServiceExtractor::class);

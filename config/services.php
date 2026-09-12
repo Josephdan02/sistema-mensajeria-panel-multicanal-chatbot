@@ -2,6 +2,16 @@
 
 return [
 
+    'clinic_agenda' => [
+        'driver' => env('AGENDA_SERVICE', 'mock'),
+    ],
+
+    'clinic_api' => [
+        'url' => env('CLINIC_API_URL'),
+        'key' => env('CLINIC_API_KEY'),
+        'timeout' => env('CLINIC_API_TIMEOUT', 10),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services

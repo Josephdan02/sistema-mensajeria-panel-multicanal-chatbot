@@ -8,6 +8,11 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\External\AI\AIServiceInterface;
 use App\Services\External\Agenda\AgendaServiceInterface;
+use App\Services\External\Agenda\ApiAgendaService;
+use App\Services\External\Agenda\ClinicApiException;
+use App\Services\External\Agenda\PatientResolver;
+use App\Services\External\Agenda\ProfessionalResolver;
+use App\Services\External\Agenda\ServiceResolver;
 use App\Services\Intent\IntentDetectorInterface;
 use App\Services\Response\ResponseGenerator;
 use App\Services\Slots\ServiceExtractorInterface;
@@ -43,6 +48,9 @@ class ChatbotService
         private readonly ServiceExtractorInterface $serviceExtractor,
         private readonly DateExtractorInterface $dateExtractor,
         private readonly TimeExtractorInterface $timeExtractor,
+        private readonly PatientResolver $patientResolver,
+        private readonly ServiceResolver $serviceResolver,
+        private readonly ProfessionalResolver $professionalResolver,
     ) {
     }
 
@@ -68,6 +76,12 @@ class ChatbotService
         }
 
         if (! $awaitingInput && $intent === Intent::REQUEST_APPOINTMENT) {
+            $document = $this->extractDocument($userMessage);
+
+            if ($document !== null) {
+                $this->conversationManager->setSlot($conversation, 'patient_document', $document);
+            }
+
             $date = $this->dateExtractor->extract($userMessage);
 
             if ($date !== null) {
@@ -159,7 +173,9 @@ class ChatbotService
 
         $reply = match ($awaiting) {
             'service_info' => $this->responses->serviceInfo(trim($userMessage)),
+            'patient_document' => $this->onPatientDocumentProvided($conversation, $userMessage),
             'appointment_service' => $this->onAppointmentServiceProvided($conversation, $userMessage),
+            'appointment_professional' => $this->onAppointmentProfessionalProvided($conversation, $userMessage),
             'appointment_date' => $this->onAppointmentDateProvided($conversation, $userMessage),
             'appointment_time' => $this->onAppointmentTimeProvided($conversation, $userMessage),
             'appointment_confirmation' => $this->onAppointmentConfirmationProvided($conversation, $userMessage),
@@ -237,6 +253,10 @@ class ChatbotService
 
     private function startAppointmentRequest(Conversation $conversation): string
     {
+        if ($this->usesRealAgenda()) {
+            return $this->continueRealAppointmentCollection($conversation);
+        }
+
         $service = $this->conversationManager->getSlot($conversation, 'service');
         $date = $this->conversationManager->getSlot($conversation, 'date');
 
@@ -302,6 +322,22 @@ class ChatbotService
     private function onAppointmentServiceProvided(Conversation $conversation, string $userMessage): string
     {
         $service = trim($userMessage);
+
+        if ($this->usesRealAgenda()) {
+            $options = $this->conversationManager->getSlot($conversation, 'service_options', []);
+
+            if (ctype_digit($service) && isset($options[(int) $service - 1])) {
+                $match = $options[(int) $service - 1];
+                $this->conversationManager->setSlot($conversation, 'service', $match['nombre']);
+                $this->conversationManager->setSlot($conversation, 'servicio_id', $match['id']);
+                $this->conversationManager->setSlot($conversation, 'service_options', null);
+
+                return $this->continueRealAppointmentCollection($conversation);
+            }
+
+            return $this->resolveService($conversation, $service);
+        }
+
         $this->conversationManager->setSlot($conversation, 'service', $service);
         $this->conversationManager->setAwaiting($conversation, 'appointment_date');
 
@@ -314,6 +350,12 @@ class ChatbotService
 
         if (! $this->conversationManager->isValidDate($date)) {
             return $this->responses->invalidDate();
+        }
+
+        if ($this->usesRealAgenda()) {
+            $this->conversationManager->setSlot($conversation, 'date', $date);
+
+            return $this->continueRealAppointmentCollection($conversation);
         }
 
         $service = $this->conversationManager->getSlot($conversation, 'service');
@@ -340,6 +382,32 @@ class ChatbotService
 
     private function onAppointmentTimeProvided(Conversation $conversation, string $userMessage): string
     {
+        if ($this->usesRealAgenda()) {
+            $newDate = $this->dateExtractor->extract($userMessage);
+
+            if ($newDate !== null) {
+                if (! $this->conversationManager->isValidDate($newDate)) {
+                    return $this->responses->invalidDate();
+                }
+
+                $this->conversationManager->setSlot($conversation, 'date', $newDate);
+            }
+
+            $time = $this->timeExtractor->extract($userMessage);
+
+            if ($time === null) {
+                return $this->responses->askConcreteTime();
+            }
+
+            if (! $this->conversationManager->isValidTime($time)) {
+                return $this->responses->invalidTime();
+            }
+
+            $this->conversationManager->setSlot($conversation, 'time', $time);
+
+            return $this->checkRealAvailability($conversation);
+        }
+
         $time = $this->timeExtractor->extract($userMessage);
         $service = $this->conversationManager->getSlot($conversation, 'service');
         $date = $this->conversationManager->getSlot($conversation, 'date');
@@ -615,5 +683,303 @@ return $this->responses->appointmentRescheduled($appointment);
             'message' => $reply,
             'intent' => $intent->value,
         ];
+    }
+
+    private function usesRealAgenda(): bool
+    {
+        return $this->agendaService instanceof ApiAgendaService;
+    }
+
+    private function continueRealAppointmentCollection(Conversation $conversation): string
+    {
+        if ($this->conversationManager->getSlot($conversation, 'paciente_id') === null) {
+            $document = $this->conversationManager->getSlot($conversation, 'patient_document');
+
+            if ($document === null) {
+                $this->conversationManager->setAwaiting($conversation, 'patient_document');
+
+                return $this->responses->askPatientDocument();
+            }
+
+            return $this->resolvePatient($conversation, $document);
+        }
+
+        if ($this->conversationManager->getSlot($conversation, 'servicio_id') === null) {
+            $service = $this->conversationManager->getSlot($conversation, 'service');
+
+            if ($service === null) {
+                $this->conversationManager->setAwaiting($conversation, 'appointment_service');
+
+                return $this->responses->askServiceForAppointment();
+            }
+
+            return $this->resolveService($conversation, $service);
+        }
+
+        if ($this->conversationManager->getSlot($conversation, 'profesional_id') === null) {
+            $professional = $this->conversationManager->getSlot($conversation, 'professional');
+
+            if ($professional === null) {
+                $this->conversationManager->setAwaiting($conversation, 'appointment_professional');
+
+                return $this->responses->askProfessional();
+            }
+
+            return $this->resolveProfessional($conversation, $professional);
+        }
+
+        if ($this->conversationManager->getSlot($conversation, 'date') === null) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_date');
+
+            return $this->responses->askDateForAppointment((string) $this->conversationManager->getSlot($conversation, 'service'));
+        }
+
+        if ($this->conversationManager->getSlot($conversation, 'time') === null) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+            return '¿A qué hora prefieres? (ej: 16:00)';
+        }
+
+        return $this->checkRealAvailability($conversation);
+    }
+
+    private function checkRealAvailability(Conversation $conversation): string
+    {
+        $patientId = $this->conversationManager->getSlot($conversation, 'paciente_id');
+        $serviceId = $this->conversationManager->getSlot($conversation, 'servicio_id');
+        $professionalId = $this->conversationManager->getSlot($conversation, 'profesional_id');
+        $date = $this->conversationManager->getSlot($conversation, 'date');
+        $time = $this->conversationManager->getSlot($conversation, 'time');
+
+        if ($patientId === null || $serviceId === null || $professionalId === null || $date === null || $time === null) {
+            return $this->continueRealAppointmentCollection($conversation);
+        }
+
+        if (! is_numeric($serviceId) || (int) $serviceId < 1 || ! is_numeric($professionalId) || (int) $professionalId < 1) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_professional');
+
+            return $this->responses->availabilityLookupFailed();
+        }
+
+        if (! is_string($date) || ! $this->conversationManager->isValidDate($date)) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_date');
+
+            return $this->responses->invalidDate();
+        }
+
+        if (! is_string($time) || ! $this->conversationManager->isValidTime($time)) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+            return $this->responses->askConcreteTime();
+        }
+
+        $existingAppointmentId = $this->conversationManager->getSlot($conversation, 'appointment_id');
+
+        if (is_numeric($existingAppointmentId) && (int) $existingAppointmentId > 0) {
+            $existingAppointment = $this->conversationManager->getSlot($conversation, 'appointment');
+
+            if (! is_array($existingAppointment)) {
+                $existingAppointment = [
+                    'id' => (int) $existingAppointmentId,
+                    'service' => (string) $this->conversationManager->getSlot($conversation, 'service'),
+                    'date' => $date,
+                    'time' => $time,
+                ];
+            }
+            $this->conversationManager->clearAwaiting($conversation);
+
+            return $this->responses->appointmentAlreadyCreated($existingAppointment);
+        }
+
+        $consultorioId = $this->conversationManager->getSlot($conversation, 'consultorio_id');
+        $consultorioId = is_numeric($consultorioId) && (int) $consultorioId > 0 ? (int) $consultorioId : null;
+
+        try {
+            $available = $this->realAgenda()->checkSpecificAvailability(
+                (int) $serviceId,
+                (int) $professionalId,
+                $date,
+                $time,
+                $consultorioId,
+            );
+        } catch (ClinicApiException) {
+            $this->conversationManager->setSlot($conversation, 'availability_checked', false);
+            $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+            return $this->responses->availabilityLookupFailed();
+        }
+
+        $this->conversationManager->setSlot($conversation, 'availability_checked', true);
+        $this->conversationManager->setSlot($conversation, 'availability_result', $available);
+
+        if (! $available) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+            return $this->responses->availabilityUnavailable($date, $time);
+        }
+
+        try {
+            $appointment = $this->realAgenda()->requestAppointmentByIds(
+                (int) $patientId,
+                (int) $professionalId,
+                (int) $serviceId,
+                $date,
+                $time,
+                $consultorioId,
+            );
+        } catch (ClinicApiException $exception) {
+            if ($exception->status === 409) {
+                $this->conversationManager->setSlot($conversation, 'appointment_creation_status', 'failed');
+                $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+                return $this->responses->appointmentConflict();
+            }
+
+            if ($exception->status === null) {
+                $this->conversationManager->setSlot($conversation, 'appointment_creation_status', 'unknown');
+                $this->conversationManager->clearAwaiting($conversation);
+
+                return $this->responses->appointmentCreationUncertain();
+            }
+
+            $this->conversationManager->setSlot($conversation, 'appointment_creation_status', 'failed');
+            $this->conversationManager->setAwaiting($conversation, 'appointment_time');
+
+            return $this->responses->appointmentCreationFailed();
+        }
+
+        $this->conversationManager->setSlot($conversation, 'appointment_id', $appointment['id']);
+        $this->conversationManager->setSlot($conversation, 'appointment', $appointment);
+        $this->conversationManager->setSlot($conversation, 'appointment_creation_status', 'created');
+        $this->conversationManager->clearAwaiting($conversation);
+
+        return $this->responses->appointmentCreated($appointment);
+    }
+
+    private function realAgenda(): ApiAgendaService
+    {
+        return $this->agendaService;
+    }
+
+    private function onPatientDocumentProvided(Conversation $conversation, string $userMessage): string
+    {
+        $document = trim($userMessage);
+
+        if ($document === '' || preg_match('/\A[A-Za-z0-9][A-Za-z0-9.\-]{3,29}\z/u', $document) !== 1) {
+            return $this->responses->askPatientDocument();
+        }
+
+        $this->conversationManager->setSlot($conversation, 'patient_document', $document);
+
+        return $this->resolvePatient($conversation, $document);
+    }
+
+    private function resolvePatient(Conversation $conversation, string $document): string
+    {
+        try {
+            $result = $this->patientResolver->resolve($document);
+        } catch (ClinicApiException) {
+            return $this->responses->patientLookupFailed();
+        }
+
+        if ($result['status'] === 'not_found') {
+            return $this->responses->patientNotFound();
+        }
+
+        if ($result['status'] === 'multiple_matches') {
+            return $this->responses->patientAmbiguous();
+        }
+
+        $this->conversationManager->setSlot($conversation, 'paciente_id', $result['data']['id']);
+
+        return $this->continueRealAppointmentCollection($conversation);
+    }
+
+    private function resolveService(Conversation $conversation, string $service): string
+    {
+        try {
+            $result = $this->serviceResolver->resolve($service);
+        } catch (ClinicApiException) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_service');
+
+            return $this->responses->serviceLookupFailed();
+        }
+
+        if ($result['status'] === 'not_found') {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_service');
+
+            return $this->responses->serviceNotFound();
+        }
+
+        if ($result['status'] === 'multiple_matches') {
+            $this->conversationManager->setSlot($conversation, 'service_options', $result['data']);
+            $this->conversationManager->setAwaiting($conversation, 'appointment_service');
+
+            return $this->responses->serviceAmbiguous($result['data']);
+        }
+
+        $this->conversationManager->setSlot($conversation, 'service', $result['data']['nombre']);
+        $this->conversationManager->setSlot($conversation, 'servicio_id', $result['data']['id']);
+        $this->conversationManager->setSlot($conversation, 'service_options', null);
+
+        return $this->continueRealAppointmentCollection($conversation);
+    }
+
+    private function onAppointmentProfessionalProvided(Conversation $conversation, string $userMessage): string
+    {
+        $professional = trim($userMessage);
+        $options = $this->conversationManager->getSlot($conversation, 'professional_options', []);
+
+        if (ctype_digit($professional) && isset($options[(int) $professional - 1])) {
+            $match = $options[(int) $professional - 1];
+            $this->conversationManager->setSlot($conversation, 'professional', trim($match['nombres'].' '.$match['apellidos']));
+            $this->conversationManager->setSlot($conversation, 'profesional_id', $match['id']);
+            $this->conversationManager->setSlot($conversation, 'professional_options', null);
+
+            return $this->continueRealAppointmentCollection($conversation);
+        }
+
+        return $this->resolveProfessional($conversation, $professional);
+    }
+
+    private function resolveProfessional(Conversation $conversation, string $professional): string
+    {
+        try {
+            $result = $this->professionalResolver->resolve($professional);
+        } catch (ClinicApiException) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_professional');
+
+            return $this->responses->professionalLookupFailed();
+        }
+
+        if ($result['status'] === 'not_found') {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_professional');
+
+            return $this->responses->professionalNotFound();
+        }
+
+        if ($result['status'] === 'multiple_matches') {
+            $this->conversationManager->setSlot($conversation, 'professional_options', $result['data']);
+            $this->conversationManager->setAwaiting($conversation, 'appointment_professional');
+
+            return $this->responses->professionalAmbiguous($result['data']);
+        }
+
+        $this->conversationManager->setSlot($conversation, 'professional', trim($result['data']['nombres'].' '.$result['data']['apellidos']));
+        $this->conversationManager->setSlot($conversation, 'profesional_id', $result['data']['id']);
+        $this->conversationManager->setSlot($conversation, 'professional_options', null);
+
+        return $this->continueRealAppointmentCollection($conversation);
+    }
+
+    private function extractDocument(string $message): ?string
+    {
+        if (preg_match('/\b(?:documento|dni|identificaci[oó]n)\D*([A-Za-z0-9][A-Za-z0-9.\-]{3,29})\b/iu', $message, $matches) === 1) {
+            return $matches[1];
+        }
+
+        preg_match('/(?<!\d)(\d{6,15})(?!\d)/u', $message, $matches);
+
+        return isset($matches[1]) && preg_match('/\d/u', $matches[1]) === 1 ? $matches[1] : null;
     }
 }

@@ -6,6 +6,28 @@ use App\Enums\Intent;
 
 class ResponseGenerator
 {
+    public function askPatientDocument(): string { return 'Claro. Para continuar, necesito tu número de documento.'; }
+    public function patientNotFound(): string { return 'No encontré un paciente registrado con ese documento. Para continuar, primero necesitamos registrarte.'; }
+    public function patientAmbiguous(): string { return 'Encontré más de un paciente con ese documento. Necesitamos verificar tus datos antes de continuar.'; }
+    public function patientLookupFailed(): string { return 'No pude verificar tus datos en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function serviceLookupFailed(): string { return 'No pude verificar los servicios en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function professionalLookupFailed(): string { return 'No pude verificar los profesionales en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function askProfessional(): string { return '¿Con qué profesional deseas atenderte?'; }
+    public function serviceNotFound(): string { return 'No encontré ese servicio. Indícame un servicio válido, por favor.'; }
+    public function serviceAmbiguous(array $services): string { return 'Encontré varios servicios que coinciden: '.collect($services)->pluck('nombre')->join(', ').'. ¿Cuál deseas?'; }
+    public function professionalNotFound(): string { return 'No encontré ese profesional. Indícame otro nombre, por favor.'; }
+    public function professionalAmbiguous(array $professionals): string { return 'Encontré varios profesionales que coinciden: '.collect($professionals)->map(fn (array $item): string => trim($item['nombres'].' '.$item['apellidos']))->join(', ').'. ¿Cuál prefieres?'; }
+    public function appointmentDetailsCollected(): string { return 'Ya tengo tus datos, el servicio, el profesional, la fecha y la hora. La disponibilidad y creación de la cita se realizarán en el siguiente paso.'; }
+    public function availabilityAvailable(string $date, string $time, string $professional): string { return "Sí, hay disponibilidad el {$date} a las {$time} con {$professional}. La cita todavía no ha sido registrada."; }
+    public function availabilityUnavailable(string $date, string $time): string { return "Lo siento, la hora {$time} del {$date} no está disponible. ¿Qué otra hora te gustaría intentar?"; }
+    public function availabilityLookupFailed(): string { return 'No puedo verificar la disponibilidad en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function askConcreteTime(): string { return '¿Qué hora prefieres? Por favor, indícame una hora concreta, por ejemplo 16:00.'; }
+    public function appointmentCreated(array $appointment): string { return "Tu cita para \"{$appointment['service']}\" con el profesional indicado el {$appointment['date']} a las {$appointment['time']} fue registrada correctamente. Número de cita: {$appointment['id']}."; }
+    public function appointmentAlreadyCreated(array $appointment): string { return "La cita para \"{$appointment['service']}\" el {$appointment['date']} a las {$appointment['time']} ya fue registrada. Número de cita: {$appointment['id']}."; }
+    public function appointmentConflict(): string { return 'Esa hora dejó de estar disponible antes de registrarse. ¿Qué otra hora deseas intentar?'; }
+    public function appointmentCreationFailed(): string { return 'No pude registrar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function appointmentCreationUncertain(): string { return 'No pude confirmar el resultado del registro de la cita. Por favor, no vuelvas a intentarlo todavía; necesitamos verificar su estado.'; }
+    public function appointmentCreationInvalid(): string { return 'La API clínica no devolvió los datos necesarios para confirmar el registro de la cita.'; }
     public function greeting(): string { return 'Hola 👋 Bienvenido/a a la Clínica Dental. ¿En qué puedo ayudarte? Puedo darte información sobre servicios, precios, horarios, ubicación, o ayudarte a agendar, consultar o cancelar una cita.'; }
     public function farewell(): string { return '¡Gracias por escribirnos! Que tengas un excelente día. 😊'; }
     public function generalInfo(): string { return 'Somos una clínica dental enfocada en brindarte la mejor atención. ¿Sobre qué te gustaría saber más: servicios, precios, horarios o ubicación?'; }
@@ -47,7 +69,6 @@ class ResponseGenerator
     {
         return match ($intent) {
             Intent::GREETING => $this->greeting(), Intent::FAREWELL => $this->farewell(),
-            Intent::APPOINTMENT_REQUEST_FAILED => $this->appointmentRequestFailed(),
             Intent::GENERAL_INFO => $this->generalInfo(), Intent::SERVICES => $this->services(),
             Intent::PRICING => $this->pricing(), Intent::SCHEDULE => $this->schedule(),
             Intent::LOCATION => $this->location(), Intent::CONTACT => $this->contact(),
