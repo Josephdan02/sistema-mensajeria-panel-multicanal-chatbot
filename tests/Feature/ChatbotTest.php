@@ -297,6 +297,11 @@ class ChatbotTest extends TestCase
             ): ?array {
                 return null;
             }
+
+            public function appointmentsByPatient(int $patientId): array
+            {
+                return [];
+            }
         };
     });
 

@@ -15,4 +15,6 @@ interface AgendaServiceInterface
     public function cancelAppointment(string $userIdentifier, int|string $appointmentId): bool;
     /** @return array{id: int|string, service: string, date: string, time: string, status: string} */
     public function rescheduleAppointment(string $userIdentifier, int|string $appointmentId, string $date, string $time): ?array;
+    /** @return array<int, array{id: int|string, service: string, date: string, time: string, status: string}> */
+    public function appointmentsByPatient(int $patientId): array;
 }

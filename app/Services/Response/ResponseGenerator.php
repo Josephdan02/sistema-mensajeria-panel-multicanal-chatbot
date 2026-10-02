@@ -7,9 +7,42 @@ use App\Enums\Intent;
 class ResponseGenerator
 {
     public function askPatientDocument(): string { return 'Claro. Para continuar, necesito tu número de documento.'; }
-    public function patientNotFound(): string { return 'No encontré un paciente registrado con ese documento. Para continuar, primero necesitamos registrarte.'; }
+    public function patientNotFound(): string { return 'No encontré un paciente registrado con ese documento. El registro de pacientes no está disponible mediante este asistente. Puedes escribir "hablar con una persona" para continuar con atención humana o "menú" para volver al inicio.'; }
+    public function patientRegistrationUnavailable(): string { return 'El registro de pacientes no está disponible mediante este asistente. Para registrarte puedes escribir "hablar con una persona" y continuar con atención humana, o "menú" para volver al inicio.'; }
+    public function flowCancelled(): string { return 'De acuerdo, cancelé el proceso que teníamos en curso. ¿Necesitas algo más? Escribe "menú" para ver las opciones disponibles.'; }
     public function patientAmbiguous(): string { return 'Encontré más de un paciente con ese documento. Necesitamos verificar tus datos antes de continuar.'; }
     public function patientLookupFailed(): string { return 'No pude verificar tus datos en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function askQueryDocument(): string { return 'Claro. Para consultar tus citas necesito tu número de DNI.'; }
+    public function queryPatientNotFound(): string { return 'No encontré un paciente registrado con ese documento. Verifica el número e inténtalo de nuevo.'; }
+    public function patientAppointmentsLookupFailed(): string { return 'No pude verificar tus citas en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function askCancelDocument(): string { return 'Claro. Para cancelar tu cita necesito tu número de DNI.'; }
+    public function askRescheduleDocument(): string { return 'Claro. Para reprogramar tu cita necesito tu número de DNI.'; }
+    public function askAppointmentSelection(array $appointments, string $action): string
+    {
+        $lines = collect($appointments)
+            ->map(fn (array $appointment, int $index): string => ($index + 1).". {$appointment['service']} el {$appointment['date']} a las {$appointment['time']} (estado: {$appointment['status']})")
+            ->implode("\n");
+        $count = count($appointments);
+
+        return "Encontré {$count} ".($count === 1 ? 'cita' : 'citas')." a tu nombre. ¿Cuál deseas {$action}? Escribe el número:\n{$lines}";
+    }
+    public function askCancelConfirmation(array $appointment): string
+    {
+        return "¿Confirmas que deseas cancelar tu cita de \"{$appointment['service']}\" del {$appointment['date']} a las {$appointment['time']}? (sí/no)";
+    }
+    public function cancelConfirmationPrompt(): string { return 'Responde sí para cancelar la cita o no para mantenerla.'; }
+    public function appointmentCancellationKept(): string { return 'De acuerdo, tu cita se mantiene sin cambios. ¿Necesitas algo más?'; }
+    public function appointmentCancellationFailed(): string { return 'No pude cancelar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function appointmentRescheduleFailed(): string { return 'No pude reprogramar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function appointmentsFound(array $appointments): string
+    {
+        $lines = collect($appointments)
+            ->map(fn (array $appointment): string => "- {$appointment['service']} el {$appointment['date']} a las {$appointment['time']} (estado: {$appointment['status']})")
+            ->implode("\n");
+        $count = count($appointments);
+
+        return "Encontré {$count} ".($count === 1 ? 'cita' : 'citas')." a tu nombre:\n{$lines}";
+    }
     public function serviceLookupFailed(): string { return 'No pude verificar los servicios en este momento. Por favor, inténtalo nuevamente más tarde.'; }
     public function professionalLookupFailed(): string { return 'No pude verificar los profesionales en este momento. Por favor, inténtalo nuevamente más tarde.'; }
     public function askProfessional(): string { return '¿Con qué profesional deseas atenderte?'; }
@@ -28,7 +61,17 @@ class ResponseGenerator
     public function appointmentCreationFailed(): string { return 'No pude registrar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
     public function appointmentCreationUncertain(): string { return 'No pude confirmar el resultado del registro de la cita. Por favor, no vuelvas a intentarlo todavía; necesitamos verificar su estado.'; }
     public function appointmentCreationInvalid(): string { return 'La API clínica no devolvió los datos necesarios para confirmar el registro de la cita.'; }
-    public function greeting(): string { return 'Hola 👋 Bienvenido/a a la Clínica Dental. ¿En qué puedo ayudarte? Puedo darte información sobre servicios, precios, horarios, ubicación, o ayudarte a agendar, consultar o cancelar una cita.'; }
+    public function greeting(): string
+    {
+        return "Hola 👋 Bienvenido/a a la Clínica Dental. Soy el asistente virtual y puedo ayudarte con:\n\n".
+            "1. Consultar tus citas\n".
+            "2. Agendar una cita\n".
+            "3. Reprogramar una cita\n".
+            "4. Cancelar una cita\n".
+            "5. Consultar servicios y horarios\n".
+            "6. Consultar disponibilidad\n\n".
+            '¿Qué deseas hacer? Puedes escribir un número o decirlo con tus palabras.';
+    }
     public function farewell(): string { return '¡Gracias por escribirnos! Que tengas un excelente día. 😊'; }
     public function generalInfo(): string { return 'Somos una clínica dental enfocada en brindarte la mejor atención. ¿Sobre qué te gustaría saber más: servicios, precios, horarios o ubicación?'; }
     public function askWhichService(): string { return 'Claro. ¿Sobre qué servicio deseas información? (por ejemplo: limpieza dental, ortodoncia, blanqueamiento, extracciones)'; }

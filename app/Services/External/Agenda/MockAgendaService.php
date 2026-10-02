@@ -82,4 +82,15 @@ class MockAgendaService implements AgendaServiceInterface
 
     return $appointment->fresh()->toArray();
 }
+
+    public function appointmentsByPatient(int $patientId): array
+    {
+        // El mock no tiene el concepto de paciente: se mapea paciente_id al
+        // user_identifier para que la operación siga siendo verificable en pruebas.
+        return MockAppointment::query()
+            ->where('user_identifier', (string) $patientId)
+            ->get()
+            ->map(fn (MockAppointment $appointment): array => $appointment->toArray())
+            ->all();
+    }
 }

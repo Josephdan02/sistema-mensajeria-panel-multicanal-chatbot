@@ -44,7 +44,17 @@ class RuleBasedDateExtractor implements DateExtractorInterface
 
         preg_match_all('/(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)/', $message, $matches);
 
-        return count($matches[0]) === 1 ? $matches[0][0] : null;
+        if (count($matches[0]) === 1) {
+            return $matches[0][0];
+        }
+
+        preg_match_all('/(?<!\d)(\d{1,2})\/(\d{1,2})\/(\d{4})(?!\d)/', $message, $slashMatches);
+
+        if (count($slashMatches[0]) === 1) {
+            return sprintf('%04d-%02d-%02d', (int) $slashMatches[3][0], (int) $slashMatches[2][0], (int) $slashMatches[1][0]);
+        }
+
+        return null;
     }
 
     private function relativeDate(int $daysToAdd): string

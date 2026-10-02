@@ -116,3 +116,4 @@ class ChatbotEntityResolutionTest extends TestCase
         return $reflection->invoke($chatbot, ...$arguments);
     }
 }
+

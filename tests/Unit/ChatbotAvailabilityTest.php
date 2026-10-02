@@ -171,3 +171,4 @@ class ChatbotAvailabilityTest extends TestCase
         return $reflection->invoke($chatbot, ...$arguments);
     }
 }
+

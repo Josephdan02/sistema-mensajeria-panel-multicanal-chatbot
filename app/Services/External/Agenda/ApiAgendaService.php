@@ -212,8 +212,47 @@ class ApiAgendaService implements AgendaServiceInterface
                 'numero_documento' => (string) $patient['numero_documento'],
                 'nombres' => (string) $patient['nombres'],
                 'apellidos' => (string) $patient['apellidos'],
+                // Contacto opcional del paciente: solo se expone si CABANILLAS
+                // lo devuelve (nunca se inventan valores ni se copian en local).
+                'phone' => $this->textOrNull($patient['telefono'] ?? $patient['celular'] ?? null),
+                'email' => $this->textOrNull($patient['email'] ?? $patient['correo'] ?? null),
             ];
         }, $patients);
+    }
+
+    /** @return array<int, array{id: int, service: string, date: string, time: string, status: string, status_original: string}> */
+    public function appointmentsByPatient(int $patientId): array
+    {
+        if ($patientId < 1) {
+            throw ClinicApiException::unsupported(
+                'list_patient_appointments',
+                'El paciente_id debe ser un entero positivo.',
+            );
+        }
+
+        $response = $this->send(
+            'list_patient_appointments',
+            fn (PendingRequest $client): Response => $client->get("api/pacientes/{$patientId}/citas"),
+        );
+
+        if ($response->status() === 404) {
+            return [];
+        }
+
+        $data = $this->dataPayload($response, 'list_patient_appointments');
+
+        if (! array_is_list($data)) {
+            throw new ClinicApiException(
+                'La API clínica devolvió un listado de citas con formato inesperado.',
+                $response->status(),
+                'list_patient_appointments',
+            );
+        }
+
+        return array_values(array_map(
+            fn (array $item): array => $this->appointmentData($item, $response->status(), 'list_patient_appointments'),
+            $data,
+        ));
     }
 
     /** @return array<int, array{id: int, codigo: string, nombre: string, descripcion?: string|null, duracion_estimada_minutos?: int, precio_actual?: string}> */
@@ -291,12 +330,16 @@ class ApiAgendaService implements AgendaServiceInterface
 
     private function appointmentPayload(Response $response, string $operation): array
     {
-        $data = $this->dataPayload($response, $operation);
+        return $this->appointmentData($this->dataPayload($response, $operation), $response->status(), $operation);
+    }
 
+    /** @param array<string, mixed> $data */
+    private function appointmentData(array $data, int $statusCode, string $operation): array
+    {
         if (! isset($data['id']) || ! is_int($data['id']) && ! ctype_digit((string) $data['id'])) {
             throw new ClinicApiException(
                 'La respuesta de la API no contiene un cita_id válido.',
-                $response->status(),
+                $statusCode,
                 $operation,
             );
         }
@@ -308,7 +351,7 @@ class ApiAgendaService implements AgendaServiceInterface
         if (! is_string($start) || $start === '' || ! isset($service['nombre'], $status['codigo'])) {
             throw new ClinicApiException(
                 'La respuesta de la API no contiene los datos mínimos de la cita.',
-                $response->status(),
+                $statusCode,
                 $operation,
             );
         }
@@ -322,6 +365,9 @@ class ApiAgendaService implements AgendaServiceInterface
             'time' => substr((string) ($data['hora'] ?? $parsed->format('H:i')), 0, 5),
             'status' => $this->mapStatus((string) $status['codigo']),
             'status_original' => (string) $status['codigo'],
+            // Profesional opcional: CABANILLAS puede anidar el objeto o enviar
+            // solo el nombre. Si no viene, se devuelve null (sin inventar datos).
+            'professional' => $this->professionalName($data['profesional'] ?? $data['profesional_nombre'] ?? null),
         ];
     }
 
@@ -382,6 +428,23 @@ class ApiAgendaService implements AgendaServiceInterface
     private function dateTime(string $date, string $time): string
     {
         return (new \DateTimeImmutable($date.' '.$time))->format('Y-m-d H:i:s');
+    }
+
+    /** Nombre del profesional de la cita, tolerando objeto anidado o texto plano. */
+    private function professionalName(mixed $value): ?string
+    {
+        if (is_array($value)) {
+            $name = trim(($value['nombres'] ?? '').' '.($value['apellidos'] ?? ''));
+
+            return $this->textOrNull($name !== '' ? $name : ($value['nombre'] ?? null));
+        }
+
+        return $this->textOrNull($value);
+    }
+
+    private function textOrNull(mixed $value): ?string
+    {
+        return is_scalar($value) && trim((string) $value) !== '' ? trim((string) $value) : null;
     }
 
     private function mapStatus(string $status): string

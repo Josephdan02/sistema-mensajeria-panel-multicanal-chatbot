@@ -7,6 +7,7 @@ use App\Services\External\AI\GeminiAIService;
 use App\Services\External\Agenda\AgendaServiceInterface;
 use App\Services\External\Agenda\ApiAgendaService;
 use App\Services\External\Agenda\MockAgendaService;
+use App\Services\External\WhatsApp\CloudApiWhatsAppService;
 use App\Services\External\WhatsApp\MockWhatsAppService;
 use App\Services\External\WhatsApp\WhatsAppServiceInterface;
 use App\Services\Intent\IntentDetectorInterface;
@@ -33,7 +34,16 @@ class AppServiceProvider extends ServiceProvider
             : MockAgendaService::class;
 
         $this->app->singleton(AgendaServiceInterface::class, $agendaImplementation);
-        $this->app->bind(WhatsAppServiceInterface::class, MockWhatsAppService::class);
+
+        // WhatsApp: 'mock' solo loguea (desarrollo/pruebas); 'api' usa
+        // CloudApiWhatsAppService contra graph.facebook.com. Mismo patrón
+        // condicional que AGENDA_SERVICE.
+        $whatsappDriver = strtolower(trim((string) config('services.whatsapp.driver', 'mock')));
+        $whatsappImplementation = $whatsappDriver === 'api'
+            ? CloudApiWhatsAppService::class
+            : MockWhatsAppService::class;
+
+        $this->app->bind(WhatsAppServiceInterface::class, $whatsappImplementation);
         $this->app->bind(AIServiceInterface::class, GeminiAIService::class);
         $this->app->bind(ServiceExtractorInterface::class, RuleBasedServiceExtractor::class);
         $this->app->bind(DateExtractorInterface::class, RuleBasedDateExtractor::class);

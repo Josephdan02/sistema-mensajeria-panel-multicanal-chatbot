@@ -9,6 +9,7 @@ use App\Services\Chatbot\ChatbotService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 /**
@@ -57,6 +58,8 @@ class ChatController extends Controller
      */
     public function message(SendMessageRequest $request): JsonResponse
     {
+        $conversation = null;
+
         try {
             $conversation = $request->filled('conversation_id')
                 ? Conversation::findOrFail($request->integer('conversation_id'))
@@ -80,11 +83,19 @@ class ChatController extends Controller
                 'data' => [
                     'conversation_id' => $result['conversation']->id,
                     'intent' => $result['intent'],
+                    // 'bot' o 'agent': cuando un agente humano controla la
+                    // conversación el bot responde con mensaje vacío.
+                    'handled_by' => $result['handled_by'] ?? 'bot',
                 ],
             ]);
         } catch (Throwable $exception) {
             Log::error('Error procesando mensaje del chatbot.', [
-                'exception' => $exception,
+                'conversation_id' => $conversation?->id,
+                'awaiting' => $conversation?->getContextValue('awaiting'),
+                'message' => Str::lower(Str::squish($request->string('message')->toString())),
+                'exception' => $exception->getMessage(),
+                'file' => $exception->getFile(),
+                'line' => $exception->getLine(),
             ]);
 
             return response()->json([

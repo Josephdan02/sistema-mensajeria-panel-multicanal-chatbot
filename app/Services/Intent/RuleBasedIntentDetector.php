@@ -13,21 +13,28 @@ class RuleBasedIntentDetector implements IntentDetectorInterface
         'cancel_appointment' => [
             ['pattern' => '/\bcancelar(?:\s+\w+){0,5}\s+cita\b/u', 'score' => 100],
             ['pattern' => '/\banular(?:\s+\w+){0,5}\s+cita\b/u', 'score' => 100],
+            ['pattern' => '/^\s*4\s*$/u', 'score' => 85],
         ],
         'reschedule_appointment' => [
             ['pattern' => '/\b(?:cambiar|reprogramar|mover|modificar)(?:\s+\w+){0,5}\s+cita\b/u', 'score' => 100],
+            ['pattern' => '/^\s*3\s*$/u', 'score' => 85],
         ],
         'request_appointment' => [
             ['pattern' => '/\b(?:agendar|reservar|programar|solicitar)\s+(?:una\s+)?cita\b/u', 'score' => 95],
             ['pattern' => '/\bsacar(?:\s+una)?\s+cita\b/u', 'score' => 95],
             ['pattern' => '/\bquiero\s+(?:una\s+)?cita\b/u', 'score' => 95],
+            ['pattern' => '/^\s*2\s*$/u', 'score' => 85],
         ],
         'check_appointment' => [
             ['pattern' => '/\b(?:consultar|ver|tengo|cu[aá]l\s+es)\s+(?:mi\s+)?cita\b/u', 'score' => 90],
             ['pattern' => '/\ba\s+qu[eé]\s+hora\s+(?:tengo|es)\s+(?:mi\s+)?cita\b/u', 'score' => 90],
+            ['pattern' => '/\b(?:consultar|ver|saber)\s+(?:mis\s+|mi\s+|las\s+)?citas\b/u', 'score' => 90],
+            ['pattern' => '/\b(?:cu[aá]les\s+son\s+(?:mis\s+)?citas|qu[eé]\s+citas?\s+tengo|tengo\s+citas)\b/u', 'score' => 90],
+            ['pattern' => '/^\s*1\s*$/u', 'score' => 85],
         ],
         'availability' => [
             ['pattern' => '/\b(?:disponibilidad|horarios?\s+disponibles|qu[eé]\s+horarios?\s+tienen)\b/u', 'score' => 80],
+            ['pattern' => '/^\s*6\s*$/u', 'score' => 85],
         ],
         'pricing' => [
             ['pattern' => '/\b(?:precio|precios|cu[aá]nto\s+cuesta|costo|cu[aá]nto\s+sale|tarifa)\b/u', 'score' => 70],
@@ -43,12 +50,14 @@ class RuleBasedIntentDetector implements IntentDetectorInterface
         ],
         'greeting' => [
             ['pattern' => '/\b(?:hola|buenas|hey|buenos\s+d[ií]as|buenas\s+(?:tardes|noches)|saludos)\b/u', 'score' => 20],
+            ['pattern' => '/\bbuen\s+d[ií]a\b/u', 'score' => 20],
         ],
         'farewell' => [
             ['pattern' => '/\b(?:ad[ií]os|chau|hasta\s+luego|nos\s+vemos|bye)\b/u', 'score' => 20],
         ],
         'services' => [
             ['pattern' => '/\b(?:servicios|tratamientos|qu[eé]\s+hacen|qu[eé]\s+ofrecen)\b/u', 'score' => 40],
+            ['pattern' => '/^\s*5\s*$/u', 'score' => 85],
         ],
         'general_info' => [
             ['pattern' => '/\b(?:informaci[oó]n|info|quisiera\s+saber|me\s+pueden\s+contar)\b/u', 'score' => 30],

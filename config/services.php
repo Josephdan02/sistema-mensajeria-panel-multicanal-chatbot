@@ -6,6 +6,19 @@ return [
         'driver' => env('AGENDA_SERVICE', 'mock'),
     ],
 
+    // WhatsApp Cloud API (Meta). `driver` = 'mock' solo loguea; 'api' envía
+    // de verdad a graph.facebook.com. Mismo patrón que AGENDA_SERVICE.
+    'whatsapp' => [
+        'driver' => env('WHATSAPP_DRIVER', 'mock'),
+        'api_url' => env('WHATSAPP_API_URL', 'https://graph.facebook.com'),
+        'api_version' => env('WHATSAPP_API_VERSION', 'v21.0'),
+        'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
+        'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
+        'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
+        'app_secret' => env('WHATSAPP_APP_SECRET'),
+        'timeout' => env('WHATSAPP_TIMEOUT', 10),
+    ],
+
     'clinic_api' => [
         'url' => env('CLINIC_API_URL'),
         'key' => env('CLINIC_API_KEY'),

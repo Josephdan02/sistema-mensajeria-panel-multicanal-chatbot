@@ -21,5 +21,8 @@ class DatabaseSeeder extends Seeder
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
+
+        // Usuarios del Sistema de Agente (agente y supervisor de prueba).
+        $this->call(AgentUserSeeder::class);
     }
 }

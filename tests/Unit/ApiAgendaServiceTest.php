@@ -178,6 +178,41 @@ class ApiAgendaServiceTest extends TestCase
         $this->service()->getAppointmentById(123);
     }
 
+    public function test_appointments_by_patient_maps_the_patient_citas_response(): void
+    {
+        Http::fake(['http://clinic.test/api/pacientes/7/citas' => Http::response([
+            'data' => [
+                [
+                    'id' => 55,
+                    'servicio' => ['nombre' => 'Limpieza dental'],
+                    'fecha' => '2026-09-10',
+                    'hora' => '16:00:00',
+                    'fecha_hora_inicio' => '2026-09-10T21:00:00.000000Z',
+                    'estado' => ['codigo' => 'PENDIENTE'],
+                ],
+            ],
+        ])]);
+
+        $appointments = $this->service()->appointmentsByPatient(7);
+
+        $this->assertCount(1, $appointments);
+        $this->assertSame(55, $appointments[0]['id']);
+        $this->assertSame('Limpieza dental', $appointments[0]['service']);
+        $this->assertSame('2026-09-10', $appointments[0]['date']);
+        $this->assertSame('16:00', $appointments[0]['time']);
+        $this->assertSame('pending_confirmation', $appointments[0]['status']);
+
+        Http::assertSent(fn ($request): bool => $request->url() === 'http://clinic.test/api/pacientes/7/citas'
+            && $request->header('X-API-Key')[0] === 'test-api-key');
+    }
+
+    public function test_appointments_by_patient_returns_empty_for_a_missing_patient(): void
+    {
+        Http::fake(['http://clinic.test/api/pacientes/7/citas' => Http::response(['message' => 'missing'], 404)]);
+
+        $this->assertSame([], $this->service()->appointmentsByPatient(7));
+    }
+
     private function service(): ApiAgendaService
     {
         return new ApiAgendaService(app(Factory::class));
