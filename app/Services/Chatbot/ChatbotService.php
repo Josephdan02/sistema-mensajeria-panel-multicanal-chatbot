@@ -7,6 +7,7 @@ use App\Enums\Intent;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\External\AI\AIServiceInterface;
+use App\Services\External\AI\AiReplyGuard;
 use App\Services\External\Agenda\AgendaServiceInterface;
 use App\Services\External\Agenda\ApiAgendaService;
 use App\Services\External\Agenda\ClinicApiException;
@@ -51,6 +52,7 @@ class ChatbotService
         private readonly PatientResolver $patientResolver,
         private readonly ServiceResolver $serviceResolver,
         private readonly ProfessionalResolver $professionalResolver,
+        private readonly ?AiReplyGuard $aiReplyGuard = null,
     ) {
     }
 
@@ -64,18 +66,14 @@ class ChatbotService
         if ($conversation->state === ConversationState::HANDOFF_TO_HUMAN) {
             return $this->respondWhileInHandoff($conversation, $userMessage);
         }
-        // Sistema de agentes: si un agente humano ya tiene el control
-        // (asignada o en atención) el bot NO responde automáticamente; solo se
-        // registra el mensaje del cliente para que lo vea el agente.
-        // Mismo comportamiento cuando la conversación está en la cola de
-        // espera (WAITING_AGENT): el bot no interpreta intenciones ni responde,
-        // solo persiste el mensaje como no leído para el agente.
-        if ($conversation->state?->isHumanControlled() === true
-            || $conversation->state === ConversationState::WAITING_AGENT) {
+        // Sistema de agentes: si un agente humano tiene el control de la
+        // conversación el bot NO responde automáticamente; solo se registra
+        // el mensaje del cliente para que lo vea el agente.
+        // Cubre los estados con un humano a cargo (ASSIGNED / ATTENDING) y la
+        // cola de espera (WAITING_AGENT / HANDOFF_TO_HUMAN).
+        if ($conversation->state?->isAgentInCharge() === true) {
             return $this->recordCustomerMessageWhileAgentControls($conversation, $userMessage);
         }
-
-
 
         $intent = $this->intentDetector->detect($userMessage, $conversation);
         $service = $this->serviceExtractor->extract($userMessage);
@@ -119,6 +117,17 @@ class ChatbotService
         // en medio de otro flujo (ej. agendando una cita).
         if ($intent === Intent::HUMAN_HANDOFF) {
             return $this->escalateToHuman($conversation, $userMessage, $intent);
+        }
+
+        if (
+            $conversation->channel === 'telegram'
+            && in_array($intent, [
+                Intent::REQUEST_APPOINTMENT,
+                Intent::AVAILABILITY,
+                Intent::RESCHEDULE_APPOINTMENT,
+            ], true)
+        ) {
+            return $this->escalateTelegramToHuman($conversation, $userMessage, $intent);
         }
 
         // Comandos globales (hola, salir, menú, cancelar, registrarme...): se
@@ -170,7 +179,7 @@ class ChatbotService
             Intent::GREETING => $this->responses->greeting(),
             Intent::FAREWELL => $this->closeConversation($conversation),
             Intent::GENERAL_INFO => $this->askWhichServiceForInfo($conversation),
-            Intent::SERVICES => $this->responses->services(),
+            Intent::SERVICES => $this->showServicesAndAwaitInfo($conversation),
             Intent::PRICING => $this->responses->pricing(),
             Intent::SCHEDULE => $this->responses->schedule(),
             Intent::LOCATION => $this->responses->location(),
@@ -199,7 +208,8 @@ class ChatbotService
             : $intent;
 
         $reply = match ($awaiting) {
-            'service_info' => $this->responses->serviceInfo(trim($userMessage)),
+            'service_info' => $this->serviceInfoReply($conversation, $userMessage),
+            'service_info_confirmation' => $this->onServiceInfoConfirmationProvided($conversation, $userMessage),
             'patient_document' => $this->onPatientDocumentProvided($conversation, $userMessage),
             'appointment_service' => $this->onAppointmentServiceProvided($conversation, $userMessage),
             'appointment_professional' => $this->onAppointmentProfessionalProvided($conversation, $userMessage),
@@ -217,10 +227,6 @@ class ChatbotService
             'cancel_confirmation' => $this->onCancelConfirmationProvided($conversation, $userMessage),
             default => $this->responses->unknown(),
         };
-
-        if ($awaiting === 'service_info') {
-            $this->conversationManager->finishFlow($conversation);
-        }
 
         return $this->persist($conversation, $userMessage, $effectiveIntent, $reply);
     }
@@ -265,8 +271,12 @@ class ChatbotService
             return 'exit';
         }
 
-        if (in_array($normalized, ['menu', 'menú', 'reiniciar', 'empezar de nuevo', 'comenzar de nuevo', 'inicio', 'ayuda', 'opciones'], true)) {
+        if (in_array($normalized, ['menu', 'menú', 'reiniciar', 'empezar de nuevo', 'comenzar de nuevo', 'inicio', 'opciones'], true)) {
             return 'menu';
+        }
+
+        if ($normalized === 'ayuda') {
+            return 'help';
         }
 
         if (in_array($normalized, ['cancelar', 'cancelar todo', 'cancelar el proceso', 'olvidalo', 'olvídalo'], true)) {
@@ -304,6 +314,10 @@ class ChatbotService
             $this->conversationManager->finishFlow($conversation);
 
             return $this->persist($conversation, $userMessage, Intent::UNKNOWN, $this->responses->flowCancelled());
+        }
+
+        if ($command === 'help') {
+            return $this->persist($conversation, $userMessage, Intent::UNKNOWN, $this->responses->helpMessage());
         }
 
         // 'greeting' y 'menu' abandonan el flujo en curso y muestran el menú.
@@ -369,11 +383,89 @@ class ChatbotService
     // Información general
     // ---------------------------------------------------------------------
 
+    /**
+     * Consulta informativa de tratamientos (flujo service_info).
+     *
+     * Resuelve el mensaje con el MISMO extractor basado en reglas del resto
+     * del chatbot (catálogo local, sin fuzzy matching). Si identifica un
+     * tratamiento se responde con su nombre y los datos del catálogo y el
+     * flujo se cierra (contexto limpio). Si es desconocido o ambiguo se pide
+     * una aclaración segura y el flujo permanece activo para que el usuario
+     * pueda reformular.
+     */
+    private function serviceInfoReply(Conversation $conversation, string $userMessage): string
+    {
+        $service = $this->serviceExtractor->extract($userMessage);
+        $reply = $this->responses->serviceInfo($service, $userMessage);
+
+        if ($service !== null) {
+            // Conserva el servicio seleccionado y deja la conversación esperando
+            // la confirmación de agendamiento. No se cierra el flujo: el
+            // usuario aún debe responder sí/no a la pregunta de agendar.
+            $this->conversationManager->setSlot($conversation, 'service', $service);
+            $this->conversationManager->setAwaiting($conversation, 'service_info_confirmation');
+        }
+
+        return $reply;
+    }
+
+    /**
+     * Responde a la pregunta de agendamiento tras consultar un servicio.
+     *
+     * Sólo se activa cuando el estado activo es service_info_confirmation.
+     */
+    private function onServiceInfoConfirmationProvided(Conversation $conversation, string $userMessage): string
+    {
+        $normalized = mb_strtolower(trim($userMessage));
+        $service = $this->conversationManager->getSlot($conversation, 'service');
+
+        // Si el usuario pide el menú de servicios o menciona un servicio
+        // diferente mientras está en la confirmación, mostrar la información
+        // y mantener el flujo de confirmación activo.
+        if (preg_match('/\A\s*5\s*\z/u', $userMessage) === 1) {
+            return $this->showServicesAndAwaitInfo($conversation);
+        }
+
+        $extractedService = $this->serviceExtractor->extract($userMessage);
+        if ($extractedService !== null) {
+            return $this->serviceInfoReply($conversation, $userMessage);
+        }
+
+        if (preg_match('/^(?:s[ií]|si|claro|de acuerdo|ok|vale|por favor)$/u', $normalized) === 1) {
+            // Respetar el comportamiento de Telegram: deriva las solicitudes de
+            // agendamiento a un agente humano en lugar de crear un flujo nuevo.
+            if ($conversation->channel === 'telegram') {
+                $this->escalateTelegramToHuman($conversation, $userMessage, Intent::REQUEST_APPOINTMENT);
+                return $this->responses->humanHandoff();
+            }
+
+            // Reutiliza el flujo existente de solicitud de cita, que ya usa el
+            // servicio guardado en el slot y pide el siguiente dato requerido.
+            return $this->startAppointmentRequest($conversation);
+        }
+
+        if (preg_match('/^(?:no|rechazar)$/u', $normalized) === 1) {
+            $this->conversationManager->finishFlow($conversation);
+
+            return $this->responses->flowCancelled();
+        }
+
+        // Respuesta ambigua: repite la pregunta sin iniciar agendamiento.
+        return $this->responses->serviceInfoConfirmationReminder();
+    }
+
     private function askWhichServiceForInfo(Conversation $conversation): string
     {
         $this->conversationManager->setAwaiting($conversation, 'service_info');
 
         return $this->responses->askWhichService();
+    }
+
+    private function showServicesAndAwaitInfo(Conversation $conversation): string
+    {
+        $this->conversationManager->setAwaiting($conversation, 'service_info');
+
+        return $this->responses->services();
     }
 
     // ---------------------------------------------------------------------
@@ -448,7 +540,11 @@ class ChatbotService
         }
 
         $service = $this->conversationManager->getSlot($conversation, 'service');
-        $slots = $this->agendaService->checkAvailability($service, $date);
+        try {
+            $slots = $this->agendaService->checkAvailability($service, $date);
+        } catch (ClinicApiException) {
+            return $this->responses->availabilityLookupFailed();
+        }
 
         $this->conversationManager->setSlot($conversation, 'date', $date);
         $this->conversationManager->setSlot($conversation, 'available_slots', $slots);
@@ -500,7 +596,13 @@ class ChatbotService
 
         $service = $this->conversationManager->getSlot($conversation, 'service');
 
-        $slots = $this->agendaService->checkAvailability($service, $date);
+        try {
+            $slots = $this->agendaService->checkAvailability($service, $date);
+        } catch (ClinicApiException) {
+            $this->conversationManager->setAwaiting($conversation, 'appointment_date');
+
+            return $this->responses->availabilityLookupFailed();
+        }
 
         if (empty($slots)) {
             // Se mantiene en 'appointment_date' para que el usuario intente otra fecha.
@@ -596,10 +698,25 @@ return $this->responses->askAppointmentConfirmation($appointment);
         $appointmentId = $this->conversationManager->getSlot($conversation, 'appointment_id');
 
         if (preg_match('/^(?:s[ií]|si|confirmar|acepto)$/u', $normalized) === 1) {
-            $appointment = $this->agendaService->confirmAppointment(
-                $conversation->user_identifier,
-                $appointmentId,
-            );
+            $this->conversationManager->setSlot($conversation, 'appointment_operation', 'confirm');
+
+            try {
+                $appointment = $this->agendaService->confirmAppointment(
+                    $conversation->user_identifier,
+                    $appointmentId,
+                );
+            } catch (ClinicApiException $exception) {
+                if ($exception->status === null) {
+                    $this->conversationManager->clearAwaiting($conversation);
+                    $this->conversationManager->setSlot($conversation, 'appointment_operation_status', 'unknown');
+
+                    return $this->responses->appointmentOperationUncertain('confirmada');
+                }
+
+                $this->conversationManager->finishFlow($conversation);
+
+                return $this->responses->appointmentCreationFailed();
+            }
 
             if ($appointment === null) {
                 $this->conversationManager->finishFlow($conversation);
@@ -613,10 +730,25 @@ return $this->responses->askAppointmentConfirmation($appointment);
         }
 
         if (preg_match('/^(?:no|cancelar|rechazar)$/u', $normalized) === 1) {
-            $cancelled = $this->agendaService->cancelAppointment(
-                $conversation->user_identifier,
-                $appointmentId,
-            );
+            $this->conversationManager->setSlot($conversation, 'appointment_operation', 'cancel');
+
+            try {
+                $cancelled = $this->agendaService->cancelAppointment(
+                    $conversation->user_identifier,
+                    $appointmentId,
+                );
+            } catch (ClinicApiException $exception) {
+                if ($exception->status === null) {
+                    $this->conversationManager->clearAwaiting($conversation);
+                    $this->conversationManager->setSlot($conversation, 'appointment_operation_status', 'unknown');
+
+                    return $this->responses->appointmentOperationUncertain('cancelada');
+                }
+
+                $this->conversationManager->finishFlow($conversation);
+
+                return $this->responses->appointmentCancellationFailed();
+            }
 
             $this->conversationManager->finishFlow($conversation);
 
@@ -640,7 +772,11 @@ return $this->responses->askAppointmentConfirmation($appointment);
             return $this->responses->askQueryDocument();
         }
 
-        $appointment = $this->agendaService->getAppointment($conversation->user_identifier);
+        try {
+            $appointment = $this->agendaService->getAppointment($conversation->user_identifier);
+        } catch (ClinicApiException) {
+            return $this->responses->patientAppointmentsLookupFailed();
+        }
 
         return $appointment
             ? $this->responses->appointmentFound($appointment)
@@ -848,9 +984,18 @@ return $this->responses->askAppointmentConfirmation($appointment);
         $appointmentId = $this->conversationManager->getSlot($conversation, 'appointment_id');
 
         if (preg_match('/^(?:s[ií]|si|confirmar|acepto)$/u', $answer) === 1) {
+            $this->conversationManager->setSlot($conversation, 'appointment_operation', 'cancel');
+
             try {
                 $cancelled = $this->agendaService->cancelAppointment($conversation->user_identifier, $appointmentId);
-            } catch (ClinicApiException) {
+            } catch (ClinicApiException $exception) {
+                if ($exception->status === null) {
+                    $this->conversationManager->clearAwaiting($conversation);
+                    $this->conversationManager->setSlot($conversation, 'appointment_operation_status', 'unknown');
+
+                    return $this->responses->appointmentOperationUncertain('cancelada');
+                }
+
                 $this->conversationManager->finishFlow($conversation);
 
                 return $this->responses->appointmentCancellationFailed();
@@ -989,6 +1134,8 @@ return $this->responses->askAppointmentConfirmation($appointment);
     }
 
     if ($this->usesRealAgenda()) {
+        $this->conversationManager->setSlot($conversation, 'appointment_operation', 'reschedule');
+
         try {
             $appointment = $this->agendaService->rescheduleAppointment(
                 $conversation->user_identifier,
@@ -1001,6 +1148,13 @@ return $this->responses->askAppointmentConfirmation($appointment);
                 $this->conversationManager->setAwaiting($conversation, 'reschedule_time');
 
                 return $this->responses->appointmentConflict();
+            }
+
+            if ($exception->status === null) {
+                $this->conversationManager->clearAwaiting($conversation);
+                $this->conversationManager->setSlot($conversation, 'appointment_operation_status', 'unknown');
+
+                return $this->responses->appointmentOperationUncertain('reprogramada');
             }
 
             $this->conversationManager->finishFlow($conversation);
@@ -1051,13 +1205,28 @@ return $this->responses->appointmentRescheduled($appointment);
 
     private function respondWhileInHandoff(Conversation $conversation, string $userMessage): array
     {
-        // Mientras está en HANDOFF_TO_HUMAN el bot no interpreta intenciones:
-        // solo registra el mensaje para que el humano lo vea, y avisa que ya
-        // está siendo atendido. (El panel/handoff real lo construirá quien
-        // desarrolle esa parte; aquí solo dejamos el dato persistido).
-        $reply = 'Ya estás en contacto con un miembro de nuestro equipo, en breve te responderá.';
+        // Mientras está en HANDOFF_TO_HUMAN el bot no interpreta intenciones
+        // ni repite el aviso de transferencia: solo registra el mensaje para
+        // que el humano lo vea. El aviso inicial ya se envió al escalar.
+        return $this->recordCustomerMessageWhileAgentControls($conversation, $userMessage);
+    }
 
-        return $this->persist($conversation, $userMessage, Intent::HUMAN_HANDOFF, $reply);
+    private function escalateTelegramToHuman(
+        Conversation $conversation,
+        string $userMessage,
+        Intent $intent,
+    ): array {
+        $slots = $conversation->getContextValue('slots', []);
+        $conversation->setContextValue('awaiting', null);
+        $conversation->setContextValue('slots', is_array($slots) ? array_intersect_key($slots, array_flip([
+            'patient_document',
+            'service',
+            'date',
+            'time',
+        ])) : []);
+        $conversation->state = ConversationState::HANDOFF_TO_HUMAN;
+
+        return $this->persist($conversation, $userMessage, $intent, $this->responses->humanHandoff());
     }
 
     /**
@@ -1100,6 +1269,16 @@ return $this->responses->appointmentRescheduled($appointment);
 
     private function unknownResponse(Conversation $conversation, string $userMessage): string
     {
+        // Prioridad del catálogo oficial: si el mensaje libre menciona un
+        // tratamiento reconocible se responde con la información del catálogo
+        // local (sin Gemini ni agenda). Si la extracción devuelve null no se
+        // adivina nada y se continúa con el flujo habitual de Gemini.
+        $service = $this->serviceExtractor->extract($userMessage);
+
+        if ($service !== null) {
+            return $this->responses->serviceInfo($service, $userMessage);
+        }
+
         try {
             $history = $conversation->messages()
                 ->latest('id')
@@ -1113,7 +1292,10 @@ return $this->responses->appointmentRescheduled($appointment);
                 ->values()
                 ->all();
 
-            return $this->aiService->generateReply($userMessage, $history);
+            // Segunda barrera: el texto del proveedor se valida antes de
+            // entregarlo al usuario. El catálogo y los agentes no pasan por
+            // aquí; el fallback local tampoco (ya es contenido propio).
+            return $this->guardAiReply($this->aiService->generateReply($userMessage, $history));
         } catch (Throwable $exception) {
             Log::warning('Gemini no disponible; se usa respuesta predefinida.', [
                 'reason' => $exception->getMessage(),
@@ -1121,6 +1303,17 @@ return $this->responses->appointmentRescheduled($appointment);
 
             return $this->responses->unknown();
         }
+    }
+
+    /**
+     * Segunda barrera: valida SOLO la respuesta del proveedor de IA antes de
+     * entregarla. El catálogo oficial y los mensajes de agentes nunca pasan
+     * por aquí. Si el contenedor no resolvió el guard (dependencia opcional),
+     * se instancia uno por defecto para que la barrera siempre esté activa.
+     */
+    private function guardAiReply(string $reply): string
+    {
+        return ($this->aiReplyGuard ?? new AiReplyGuard)->guard($reply);
     }
 
     // ---------------------------------------------------------------------

@@ -51,6 +51,24 @@ enum ConversationState: string
         return in_array($this, [self::ASSIGNED, self::ATTENDING], true);
     }
 
+    /**
+     * La conversación está en manos de un humano (o a punto de estarlo):
+     * el bot no debe responder y solo debe registrar la actividad del
+     * cliente para que el agente la vea en el panel.
+     *
+     * Incluye la cola de espera (HANDOFF_TO_HUMAN / WAITING_AGENT) porque
+     * en esos estados el bot ya calló al avisar del escalamiento.
+     */
+    public function isAgentInCharge(): bool
+    {
+        return in_array($this, [
+            self::HANDOFF_TO_HUMAN,
+            self::WAITING_AGENT,
+            self::ASSIGNED,
+            self::ATTENDING,
+        ], true);
+    }
+
     public function isClosed(): bool
     {
         return $this === self::CLOSED;
@@ -73,5 +91,4 @@ enum ConversationState: string
     {
         return array_map(static fn (self $state): string => $state->value, self::selectable());
     }
-
 }

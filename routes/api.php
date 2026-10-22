@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\WhatsAppWebhookController;
+use App\Http\Controllers\TelegramWebhookController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/chat/health', [ChatController::class, 'health']);
@@ -14,4 +15,7 @@ Route::post('/chat', [ChatController::class, 'message']);
 Route::get('/whatsapp/webhook', [WhatsAppWebhookController::class, 'verify'])
     ->middleware('throttle:30,1');
 Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'receive'])
+    ->middleware('throttle:60,1');
+
+Route::post('/telegram/webhook', [TelegramWebhookController::class, 'receive'])
     ->middleware('throttle:60,1');

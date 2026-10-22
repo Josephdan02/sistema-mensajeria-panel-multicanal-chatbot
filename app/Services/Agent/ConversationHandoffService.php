@@ -6,6 +6,8 @@ use App\Enums\ConversationState;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\External\Telegram\TelegramServiceInterface;
+use App\Services\External\Telegram\TelegramSendResult;
 use App\Services\External\WhatsApp\WhatsAppServiceInterface;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -24,8 +26,10 @@ use Throwable;
  */
 class ConversationHandoffService
 {
-    public function __construct(private readonly WhatsAppServiceInterface $whatsapp)
-    {
+    public function __construct(
+        private readonly WhatsAppServiceInterface $whatsapp,
+        private readonly TelegramServiceInterface $telegram,
+    ) {
     }
 
     /** El agente toma la conversación (de la cola o de otro agente). */
@@ -101,8 +105,14 @@ class ConversationHandoffService
      * Respuesta del agente: se persiste con sender=agent + agent_id y la
      * conversación queda EN ATENCIÓN (no vuelve al bot automáticamente).
      */
-    public function reply(Conversation $conversation, User $agent, string $body): Message
+    public function reply(Conversation $conversation, User $agent, string $body): Message|TelegramSendResult|null
     {
+        $telegramResult = $this->sendToTelegramIfChannel($conversation, $body);
+
+        if ($telegramResult !== null && ! $telegramResult->isSent()) {
+            return $telegramResult;
+        }
+
         if ($conversation->assigned_agent_id === null) {
             $conversation->assigned_agent_id = $agent->id;
             $conversation->assigned_at = now();
@@ -130,6 +140,34 @@ class ConversationHandoffService
         $this->sendToWhatsAppIfChannel($conversation, $body);
 
         return $message;
+    }
+
+    private function sendToTelegramIfChannel(Conversation $conversation, string $body): ?TelegramSendResult
+    {
+        if ($conversation->channel !== 'telegram') {
+            return null;
+        }
+
+        try {
+            $result = $this->telegram->sendMessage((string) $conversation->user_identifier, $body);
+
+            if (! $result->isSent()) {
+                Log::warning('[Telegram] No se pudo enviar la respuesta del agente.', [
+                    'conversation_id' => $conversation->id,
+                    'to' => $conversation->user_identifier,
+                    'status' => $result->status->value,
+                ]);
+            }
+
+            return $result;
+        } catch (Throwable $exception) {
+            Log::error('[Telegram] Error inesperado enviando respuesta del agente.', [
+                'conversation_id' => $conversation->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            return TelegramSendResult::unknown();
+        }
     }
 
     /**
@@ -213,12 +251,28 @@ class ConversationHandoffService
         return $conversation->refresh();
     }
 
-    /**
-     * Devuelve el control al bot: la conversación volverá a responder
-     * automáticamente en el siguiente mensaje del cliente.
-     */
-    public function releaseToBot(Conversation $conversation, User $agent): Conversation
+    public function hasUncertainAppointmentOperation(Conversation $conversation): bool
     {
+        $slots = $conversation->getContextValue('slots', []);
+
+        if (! is_array($slots)) {
+            return false;
+        }
+
+        return ($slots['appointment_creation_status'] ?? null) === 'unknown'
+            || ($slots['appointment_operation_status'] ?? null) === 'unknown';
+    }
+
+    /**
+     * Devuelve el control al bot solo cuando no hay una operación de agenda
+     * cuyo resultado deba verificarse en CABANILLAS.
+     */
+    public function releaseToBot(Conversation $conversation, User $agent): ?Conversation
+    {
+        if ($this->hasUncertainAppointmentOperation($conversation)) {
+            return null;
+        }
+
         $conversation->state = ConversationState::IDLE;
         $conversation->assigned_agent_id = null;
         $conversation->assigned_at = null;

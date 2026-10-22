@@ -97,6 +97,7 @@ class ChatbotAppointmentCreationTest extends TestCase
 
         $this->assertStringContainsString('no pude confirmar', strtolower($reply));
         $this->assertNull($conversation->getContextValue('slots.appointment_id'));
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_creation_status'));
     }
 
     public function test_http_201_without_an_id_is_not_success(): void
@@ -240,4 +241,3 @@ class ChatbotAppointmentCreationTest extends TestCase
         return $reflection->invoke($chatbot, ...$arguments);
     }
 }
-

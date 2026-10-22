@@ -3,6 +3,7 @@
 namespace App\Services\Response;
 
 use App\Enums\Intent;
+use Illuminate\Support\Str;
 
 class ResponseGenerator
 {
@@ -34,6 +35,10 @@ class ResponseGenerator
     public function appointmentCancellationKept(): string { return 'De acuerdo, tu cita se mantiene sin cambios. ¿Necesitas algo más?'; }
     public function appointmentCancellationFailed(): string { return 'No pude cancelar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
     public function appointmentRescheduleFailed(): string { return 'No pude reprogramar la cita en este momento. Por favor, inténtalo nuevamente más tarde.'; }
+    public function appointmentOperationUncertain(string $operation): string
+    {
+        return "No pude confirmar si la cita fue {$operation}. No vuelvas a intentarlo todavía; un miembro del equipo debe verificarlo.";
+    }
     public function appointmentsFound(array $appointments): string
     {
         $lines = collect($appointments)
@@ -63,7 +68,7 @@ class ResponseGenerator
     public function appointmentCreationInvalid(): string { return 'La API clínica no devolvió los datos necesarios para confirmar el registro de la cita.'; }
     public function greeting(): string
     {
-        return "Hola 👋 Bienvenido/a a la Clínica Dental. Soy el asistente virtual y puedo ayudarte con:\n\n".
+        return "Hola 👋 Bienvenido/a a la Clínica Dental Cabanillas. Soy el asistente virtual y puedo ayudarte con:\n\n".
             "1. Consultar tus citas\n".
             "2. Agendar una cita\n".
             "3. Reprogramar una cita\n".
@@ -75,13 +80,85 @@ class ResponseGenerator
     public function farewell(): string { return '¡Gracias por escribirnos! Que tengas un excelente día. 😊'; }
     public function generalInfo(): string { return 'Somos una clínica dental enfocada en brindarte la mejor atención. ¿Sobre qué te gustaría saber más: servicios, precios, horarios o ubicación?'; }
     public function askWhichService(): string { return 'Claro. ¿Sobre qué servicio deseas información? (por ejemplo: limpieza dental, ortodoncia, blanqueamiento, extracciones)'; }
-    public function serviceInfo(string $service): string { return "Sobre \"{$service}\": con gusto te damos más detalles. Un miembro del equipo puede confirmarte precio exacto y disponibilidad. ¿Quieres que te ayude a agendar una cita para este servicio?"; }
+    /**
+     * Respuesta informativa del flujo service_info.
+     *
+     * $service es el nombre canónico resuelto con el catálogo local
+     * (config/chatbot.services) mediante el extractor existente, o null cuando
+     * el mensaje no identifica un tratamiento (desconocido o ambiguo). Solo se
+     * muestran descripciones y beneficios que existan en el catálogo: nunca se
+     * inventan precios, duraciones, horarios ni disponibilidad.
+     */
+    public function serviceInfo(?string $service, string $originalMessage = ''): string
+    {
+        $asksUnverifiedData = $this->asksUnverifiedData($originalMessage);
+
+        if ($service === null) {
+            return $asksUnverifiedData
+                ? $this->unverifiedTreatmentData()
+                : $this->serviceNotFound();
+        }
+
+        $entry = $this->catalogEntryByName($service);
+        $description = is_array($entry) ? ($entry['description'] ?? null) : null;
+        $benefits = is_array($entry) ? ($entry['benefits'] ?? null) : null;
+
+        if (is_string($description) && trim($description) !== '') {
+            $response = "Sobre \"{$service}\": {$description}";
+        } else {
+            $response = "Sobre \"{$service}\": con gusto te damos más detalles.";
+        }
+
+        if (is_array($benefits) && $benefits !== []) {
+            $response .= ' Beneficios: '.implode(', ', $benefits).'.';
+        }
+
+        $response .= $asksUnverifiedData
+            ? ' '.$this->unverifiedTreatmentData().' ¿Quieres que te ayude a agendar una cita para este servicio?'
+            : ' Un miembro del equipo puede confirmarte precio exacto y disponibilidad. ¿Quieres que te ayude a agendar una cita para este servicio?';
+
+        return $response;
+    }
+
+    /** @return array{name: string, aliases: array<int, string>, description?: string, benefits?: array<int, string>}|null */
+    private function catalogEntryByName(string $service): ?array
+    {
+        foreach (config('chatbot.services', []) as $entry) {
+            if (is_array($entry) && ($entry['name'] ?? null) === $service) {
+                return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Detección de consultas sobre datos que el catálogo NO verifica
+     * (precios, horarios, disponibilidad de citas y duración). Solo da forma
+     * a la respuesta dentro del flujo service_info: no altera la detección de
+     * intenciones ni las interrupciones/derivaciones existentes.
+     */
+    private function asksUnverifiedData(string $message): bool
+    {
+        $normalized = Str::ascii(Str::lower(Str::squish($message)));
+
+        return preg_match('/\b(precios?|cuesta|cuanto\s+cuesta\w*|cuanto\s+sale|costos?|tarifas?)\b/', $normalized) === 1
+            || preg_match('/\b(horarios?|abren|cierran|atienden)\b/', $normalized) === 1
+            || preg_match('/\b(disponibilidad|agenda)\b/', $normalized) === 1
+            || preg_match('/\b(duracion|dura|tarda\w*|cuanto\s+tarda\w*|cuanto\s+demora\w*)\b/', $normalized) === 1;
+    }
+
+    private function unverifiedTreatmentData(): string
+    {
+        return 'Precios, horarios, disponibilidad de citas y duración deben confirmarse con la clínica o con un agente.';
+    }
     public function services(): string { return 'Nuestros servicios principales son: limpieza dental, ortodoncia, blanqueamiento, extracciones, endodoncia e implantes. ¿Sobre cuál deseas más información?'; }
     public function pricing(): string { return 'Nuestros servicios tienen diferentes precios según el tratamiento. ¿Qué tratamiento deseas consultar?'; }
     public function schedule(): string { return 'Nuestro horario de atención es de lunes a viernes de 9:00 a 18:00, y sábados de 9:00 a 13:00.'; }
     public function location(): string { return 'Estamos ubicados en Av. Principal 123. Próximamente podrás ver el mapa directamente aquí.'; }
     public function contact(): string { return 'Puedes contactarnos al +51 999 999 999 o al correo contacto@clinicadental.com.'; }
     public function askServiceForAppointment(): string { return '¡Perfecto! ¿Para qué servicio deseas agendar la cita?'; }
+    public function serviceInfoConfirmationReminder(): string { return '¿Quieres que te ayude a agendar una cita para este servicio? Responde sí o no.'; }
     public function askServiceForAvailability(): string { return 'Claro. ¿Para qué servicio deseas consultar disponibilidad?'; }
     public function askDateForAvailability(string $service): string { return "Entendido, {$service}. ¿Para qué fecha deseas consultar disponibilidad?"; }
     public function askDateForAppointment(string $service): string { return "Entendido, {$service}. ¿Qué fecha te gustaría? (ej: 2026-08-25)"; }
@@ -105,6 +182,7 @@ class ResponseGenerator
     public function appointmentCancelled(): string { return 'Tu cita fue cancelada correctamente. Si deseas agendar una nueva, avísame.'; }
     public function appointmentRescheduled(array $appointment): string { return "Tu cita fue reprogramada para el {$appointment['date']} a las {$appointment['time']} (estado: {$appointment['status']})."; }
     public function humanHandoff(): string { return 'Entendido, en un momento un miembro de nuestro equipo continuará la conversación contigo. Por favor espera un momento. 🙏'; }
+    public function helpMessage(): string { return 'Puedo ayudarte con información sobre servicios, horarios, ubicación y contacto. Escribe "hola" para comenzar o "hablar con una persona" para ser atendido por un agente.'; }
     public function conversationClosed(): string { return 'Esta conversación fue cerrada. Escríbenos de nuevo cuando quieras. 👋'; }
     public function unknown(): string { return 'Disculpa, no logré entender tu mensaje. ¿Podrías reformularlo? También puedo ponerte en contacto con una persona si lo prefieres.'; }
 

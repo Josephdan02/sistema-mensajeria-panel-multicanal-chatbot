@@ -44,7 +44,7 @@ class ChatbotEntityResolutionTest extends TestCase
             ]]),
             'http://clinic.test/api/profesionales' => Http::response(['data' => [
                 ['id' => 7, 'nombres' => 'Juan', 'apellidos' => 'Pérez'],
-            ]]),
+            ]]),  
             'http://clinic.test/api/disponibilidad*' => Http::response(['data' => ['available' => true]]),
             'http://clinic.test/api/citas' => Http::response(['data' => [
                 'id' => 123,

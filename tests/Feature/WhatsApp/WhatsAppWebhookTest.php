@@ -113,6 +113,25 @@ class WhatsAppWebhookTest extends WhatsAppTestCase
         $this->assertWhatsAppSent('549115550001');
     }
 
+    public function test_initial_handoff_sends_one_transfer_notice(): void
+    {
+        $this->useCloudApiWhatsApp();
+        Http::fake();
+
+        $this->postWebhook($this->inboundTextPayload('549115550004', 'quiero hablar con una persona'))
+            ->assertOk();
+
+        $conversation = Conversation::query()
+            ->where('channel', 'whatsapp')
+            ->where('user_identifier', '549115550004')
+            ->firstOrFail();
+
+        $this->assertSame(ConversationState::HANDOFF_TO_HUMAN, $conversation->state);
+        $this->assertSame(1, $conversation->messages()->where('sender', Message::SENDER_BOT)->count());
+        $this->assertWhatsAppSentCount(1);
+        $this->assertWhatsAppSent('549115550004');
+    }
+
     public function test_second_message_reuses_the_same_whatsapp_conversation(): void
     {
         $this->useCloudApiWhatsApp();
@@ -127,6 +146,37 @@ class WhatsAppWebhookTest extends WhatsAppTestCase
         $this->assertSame(1, Conversation::where('channel', 'whatsapp')->count());
         $this->assertSame(4, $conversation->messages()->count());
         $this->assertSame(2, $conversation->messages()->where('sender', Message::SENDER_USER)->count());
+    }
+
+    public function test_closed_conversation_reopens_for_the_bot_and_clears_stale_agent_metadata(): void
+    {
+        $this->useCloudApiWhatsApp();
+        Http::fake();
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'user_identifier' => '549115550004',
+            'channel' => 'whatsapp',
+            'state' => ConversationState::CLOSED,
+            'assigned_agent_id' => $agent->id,
+            'assigned_at' => now()->subHour(),
+            'closed_at' => now()->subMinutes(30),
+            'closed_by' => $agent->id,
+        ]);
+        $previous = $this->customerMessage($conversation, 'La atención ha finalizado.', true);
+
+        $this->postWebhook($this->inboundTextPayload('549115550004', 'hola', 'wamid.CLOSED1'))
+            ->assertOk();
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::IDLE, $conversation->state);
+        $this->assertNull($conversation->assigned_agent_id);
+        $this->assertNull($conversation->assigned_at);
+        $this->assertNull($conversation->closed_at);
+        $this->assertNull($conversation->closed_by);
+        $this->assertTrue($conversation->messages()->whereKey($previous->id)->exists());
+        $this->assertSame(3, $conversation->messages()->count());
+        $this->assertSame(1, $conversation->messages()->where('sender', Message::SENDER_USER)->where('message', 'hola')->count());
+        $this->assertWhatsAppSentCount(1);
     }
 
     public function test_web_conversation_with_same_identifier_is_not_touched(): void
@@ -257,7 +307,7 @@ class WhatsAppWebhookTest extends WhatsAppTestCase
         $this->assertWhatsAppSentCount(0);
     }
 
-    public function test_bot_notice_is_sent_when_the_conversation_is_in_handoff(): void
+    public function test_bot_is_silent_when_the_whatsapp_conversation_is_in_handoff(): void
     {
         $this->useCloudApiWhatsApp();
         Http::fake();
@@ -268,15 +318,14 @@ class WhatsAppWebhookTest extends WhatsAppTestCase
             'state' => ConversationState::HANDOFF_TO_HUMAN,
         ]);
 
-        $this->postWebhook($this->inboundTextPayload('549115550003', '¿Alguien me atiende?'))->assertOk();
+        $this->postWebhook($this->inboundTextPayload('549115550003', '¿Alguien me atiende?', 'wamid.handoff-1'))->assertOk();
+        $this->postWebhook($this->inboundTextPayload('549115550003', '¿Hay novedades?', 'wamid.handoff-2'))->assertOk();
 
         $conversation->refresh();
         $this->assertSame(ConversationState::HANDOFF_TO_HUMAN, $conversation->state);
-
-        // El aviso "ya estás en contacto con el equipo" sí sale por WhatsApp
-        // (comportamiento original de HANDOFF_TO_HUMAN preservado).
-        $this->assertWhatsAppSentCount(1);
-        $this->assertWhatsAppSent('549115550003');
+        $this->assertSame(2, $conversation->messages()->where('sender', Message::SENDER_USER)->count());
+        $this->assertSame(0, $conversation->messages()->where('sender', Message::SENDER_BOT)->count());
+        $this->assertWhatsAppSentCount(0);
     }
 
     // ------------------------------------------------------------------

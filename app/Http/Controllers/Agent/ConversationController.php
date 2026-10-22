@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\Agent\ClinicInfoService;
 use App\Services\Agent\ConversationHandoffService;
 use App\Services\Agent\InboxService;
+use App\Services\External\Telegram\TelegramSendResult;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -102,7 +103,35 @@ class ConversationController extends Controller
     {
         Gate::authorize('reply', $conversation);
 
-        $this->handoff->reply($conversation, $request->user(), $request->string('message')->toString());
+        $message = $this->handoff->reply($conversation, $request->user(), $request->string('message')->toString());
+
+        if ($message instanceof TelegramSendResult) {
+            $error = $message->isFailed()
+                ? 'Telegram rechazó el mensaje. No se registró como enviado; puedes decidir manualmente si deseas volver a intentarlo.'
+                : 'No se pudo confirmar si Telegram recibió el mensaje. No se registró como enviado; no se reintentará automáticamente.';
+
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $error,
+                ], 502);
+            }
+
+            return back()->withErrors(['message' => $error]);
+        }
+
+        if ($message === null) {
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo enviar el mensaje al cliente.',
+                ], 502);
+            }
+
+            return back()->withErrors([
+                'message' => 'No se pudo enviar el mensaje al cliente.',
+            ]);
+        }
 
         return $this->respond($request, $conversation, 'Mensaje enviado al cliente.');
     }
@@ -156,7 +185,18 @@ class ConversationController extends Controller
     {
         Gate::authorize('updateState', $conversation);
 
-        $this->handoff->releaseToBot($conversation, $request->user());
+        if ($this->handoff->releaseToBot($conversation, $request->user()) === null) {
+            $message = 'No se puede devolver la conversación al bot: verifica primero en CABANILLAS el resultado incierto de la operación de la cita.';
+
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $message,
+                ], 409);
+            }
+
+            return back()->withErrors(['conversation' => $message]);
+        }
 
         return $this->respond($request, $conversation, 'La conversación volvió al bot.');
     }

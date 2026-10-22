@@ -16,6 +16,15 @@
     // que solo tienen sentido cuando el JS esta presente.
     document.documentElement.classList.add('has-js');
 
+    document.addEventListener('submit', function (event) {
+        var form = event.target;
+        var message = form && form.getAttribute ? form.getAttribute('data-confirm') : null;
+
+        if (message && !window.confirm(message)) {
+            event.preventDefault();
+        }
+    });
+
     var THREAD_MS = 5000;
     var LIST_MS = 10000;
     var STATS_MS = 10000;

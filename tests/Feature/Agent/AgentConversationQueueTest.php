@@ -33,6 +33,88 @@ class AgentConversationQueueTest extends AgentTestCase
         $this->assertStringContainsString('devolvió la conversación al bot', $system->message);
     }
 
+    public function test_agent_cannot_return_creation_with_uncertain_result_to_the_bot(): void
+    {
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'state' => ConversationState::ATTENDING,
+            'assigned_agent_id' => $agent->id,
+            'context' => [
+                'slots' => ['appointment_creation_status' => 'unknown'],
+            ],
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.release', $conversation))
+            ->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'No se puede devolver la conversación al bot: verifica primero en CABANILLAS el resultado incierto de la operación de la cita.');
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::ATTENDING, $conversation->state);
+        $this->assertSame($agent->id, $conversation->assigned_agent_id);
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_creation_status'));
+    }
+
+    public function test_agent_cannot_return_uncertain_appointment_operation_to_the_bot(): void
+    {
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'state' => ConversationState::ATTENDING,
+            'assigned_agent_id' => $agent->id,
+            'context' => [
+                'slots' => [
+                    'appointment_operation_status' => 'unknown',
+                    'appointment_operation' => 'reschedule',
+                ],
+            ],
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.release', $conversation))
+            ->assertStatus(409);
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::ATTENDING, $conversation->state);
+        $this->assertSame($agent->id, $conversation->assigned_agent_id);
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_operation_status'));
+        $this->assertSame('reschedule', $conversation->getContextValue('slots.appointment_operation'));
+    }
+
+    public function test_customer_message_remains_under_human_control_when_uncertain_release_is_blocked(): void
+    {
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'user_identifier' => 'uncertain-controlled-user',
+            'state' => ConversationState::ATTENDING,
+            'assigned_agent_id' => $agent->id,
+            'context' => [
+                'slots' => [
+                    'appointment_operation_status' => 'unknown',
+                    'appointment_operation' => 'cancel',
+                ],
+            ],
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.release', $conversation))
+            ->assertStatus(409);
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversation->id,
+            'userIdentifier' => 'uncertain-controlled-user',
+            'message' => '¿Hay novedades sobre mi cita?',
+        ])
+            ->assertOk()
+            ->assertJsonPath('message', '')
+            ->assertJsonPath('data.handled_by', 'agent');
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::ATTENDING, $conversation->state);
+        $this->assertSame(1, $conversation->unreadMessagesCount());
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_operation_status'));
+    }
+
     public function test_agent_can_return_the_conversation_to_the_queue(): void
     {
         $agent = $this->agent();

@@ -173,6 +173,55 @@ class ChatbotRealAgendaManagementTest extends TestCase
         $this->assertNull($conversation->getContextValue('awaiting'));
     }
 
+    public function test_real_cancel_timeout_is_uncertain_and_is_not_retried(): void
+    {
+        $this->useRealAgenda();
+        $cancelRequests = 0;
+        Http::fake([
+            'http://clinic.test/api/pacientes?numero_documento=90000001' => Http::response([
+                'data' => [
+                    'id' => 1,
+                    'tipo_documento' => 'DNI',
+                    'numero_documento' => '90000001',
+                    'nombres' => 'Paciente',
+                    'apellidos' => 'Prueba E2E',
+                ],
+            ]),
+            'http://clinic.test/api/pacientes/1/citas' => Http::response([
+                'data' => [$this->appointment(5, 'Limpieza dental', '2026-09-10', '16', 'PENDIENTE')],
+            ]),
+            'http://clinic.test/api/citas/5/cancelar' => function () use (&$cancelRequests): never {
+                $cancelRequests++;
+                throw new \Illuminate\Http\Client\ConnectionException('timeout');
+            },
+        ]);
+
+        $start = $this->postJson('/api/chat', [
+            'userIdentifier' => 'cancel-timeout-user',
+            'message' => 'cancelar mi cita',
+        ]);
+        $conversationId = $start->json('data.conversation_id');
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'cancel-timeout-user',
+            'message' => '90000001',
+        ]);
+
+        $response = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'cancel-timeout-user',
+            'message' => 'sí',
+        ]);
+
+        $response->assertOk()->assertJsonPath('data.intent', 'cancel_appointment');
+        $this->assertStringContainsString('no pude confirmar', strtolower($response->json('message')));
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_operation_status'));
+        $this->assertSame('cancel', $conversation->getContextValue('slots.appointment_operation'));
+        $this->assertSame(1, $cancelRequests);
+    }
+
     public function test_real_cancel_flow_declined_keeps_the_appointment_without_mutations(): void
     {
         $this->useRealAgenda();
@@ -412,5 +461,60 @@ class ChatbotRealAgendaManagementTest extends TestCase
 
         $conversation = Conversation::findOrFail($conversationId);
         $this->assertSame('reschedule_time', $conversation->getContextValue('awaiting'));
+    }
+
+    public function test_real_reschedule_timeout_is_uncertain_and_is_not_retried(): void
+    {
+        $this->useRealAgenda();
+        $rescheduleRequests = 0;
+        Http::fake([
+            'http://clinic.test/api/pacientes?numero_documento=90000001' => Http::response([
+                'data' => [
+                    'id' => 1,
+                    'tipo_documento' => 'DNI',
+                    'numero_documento' => '90000001',
+                    'nombres' => 'Paciente',
+                    'apellidos' => 'Prueba E2E',
+                ],
+            ]),
+            'http://clinic.test/api/pacientes/1/citas' => Http::response([
+                'data' => [$this->appointment(5, 'Limpieza dental', '2026-09-10', '16', 'PENDIENTE')],
+            ]),
+            'http://clinic.test/api/citas/5/reprogramar' => function () use (&$rescheduleRequests): never {
+                $rescheduleRequests++;
+                throw new \Illuminate\Http\Client\ConnectionException('timeout');
+            },
+        ]);
+
+        $start = $this->postJson('/api/chat', [
+            'userIdentifier' => 'reschedule-timeout-user',
+            'message' => 'reprogramar mi cita',
+        ]);
+        $conversationId = $start->json('data.conversation_id');
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'reschedule-timeout-user',
+            'message' => '90000001',
+        ]);
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'reschedule-timeout-user',
+            'message' => '2026-09-20',
+        ]);
+
+        $response = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'reschedule-timeout-user',
+            'message' => '18:30',
+        ]);
+
+        $response->assertOk()->assertJsonPath('data.intent', 'reschedule_appointment');
+        $this->assertStringContainsString('no pude confirmar', strtolower($response->json('message')));
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame('unknown', $conversation->getContextValue('slots.appointment_operation_status'));
+        $this->assertSame('reschedule', $conversation->getContextValue('slots.appointment_operation'));
+        $this->assertSame(1, $rescheduleRequests);
     }
 }

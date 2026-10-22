@@ -19,6 +19,14 @@ return [
         'timeout' => env('WHATSAPP_TIMEOUT', 10),
     ],
 
+    'telegram' => [
+        'driver' => env('TELEGRAM_DRIVER', 'api'),
+        'api_url' => env('TELEGRAM_API_URL', 'https://api.telegram.org/bot'),
+        'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+        'timeout' => env('TELEGRAM_TIMEOUT', 10),
+        'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
+    ],
+
     'clinic_api' => [
         'url' => env('CLINIC_API_URL'),
         'key' => env('CLINIC_API_KEY'),

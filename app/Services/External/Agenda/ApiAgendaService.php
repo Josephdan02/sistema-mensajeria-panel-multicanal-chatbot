@@ -356,7 +356,16 @@ class ApiAgendaService implements AgendaServiceInterface
             );
         }
 
-        $parsed = new \DateTimeImmutable($start);
+        try {
+            $parsed = new \DateTimeImmutable($start);
+        } catch (\Exception $exception) {
+            throw new ClinicApiException(
+                'La respuesta de la API contiene una fecha de cita inválida.',
+                $statusCode,
+                $operation,
+                $exception,
+            );
+        }
 
         return [
             'id' => (int) $data['id'],

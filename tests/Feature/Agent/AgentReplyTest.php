@@ -4,6 +4,7 @@ namespace Tests\Feature\Agent;
 
 use App\Enums\ConversationState;
 use App\Models\Message;
+use Illuminate\Support\Facades\Http;
 
 class AgentReplyTest extends AgentTestCase
 {
@@ -103,5 +104,87 @@ class AgentReplyTest extends AgentTestCase
             ->assertRedirect('/agent/login');
 
         $this->assertSame(0, $conversation->fresh()->messages()->count());
+    }
+
+    public function test_agent_reply_to_telegram_is_sent_and_persisted(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => true], 200)]);
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'user_identifier' => 'telegram-chat-1',
+            'channel' => 'telegram',
+            'state' => ConversationState::ASSIGNED,
+            'assigned_agent_id' => $agent->id,
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.reply', $conversation), [
+                'message' => 'Te atenderemos por Telegram.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('success', true);
+
+        Http::assertSent(fn ($request): bool => str_ends_with($request->url(), '/sendMessage')
+            && $request['chat_id'] === 'telegram-chat-1'
+            && $request['text'] === 'Te atenderemos por Telegram.');
+        $this->assertDatabaseHas('messages', [
+            'conversation_id' => $conversation->id,
+            'sender' => Message::SENDER_AGENT,
+            'message' => 'Te atenderemos por Telegram.',
+            'agent_id' => $agent->id,
+        ]);
+    }
+
+    public function test_rejected_telegram_reply_is_not_persisted(): void
+    {
+        Http::fake(['api.telegram.org/*' => Http::response(['ok' => false], 400)]);
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'user_identifier' => 'telegram-chat-2',
+            'channel' => 'telegram',
+            'state' => ConversationState::ASSIGNED,
+            'assigned_agent_id' => $agent->id,
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.reply', $conversation), [
+                'message' => 'Este mensaje será rechazado.',
+            ])
+            ->assertStatus(502)
+            ->assertJsonPath('success', false);
+
+        $this->assertDatabaseMissing('messages', [
+            'conversation_id' => $conversation->id,
+            'sender' => Message::SENDER_AGENT,
+            'message' => 'Este mensaje será rechazado.',
+        ]);
+        $this->assertSame(ConversationState::ASSIGNED, $conversation->fresh()->state);
+    }
+
+    public function test_ambiguous_telegram_reply_is_not_presented_as_delivered(): void
+    {
+        Http::fake(fn () => Http::failedConnection('Connection timed out'));
+        $agent = $this->agent();
+        $conversation = $this->conversation([
+            'user_identifier' => 'telegram-chat-ambiguous',
+            'channel' => 'telegram',
+            'state' => ConversationState::ATTENDING,
+            'assigned_agent_id' => $agent->id,
+        ]);
+
+        $this->actingAs($agent)
+            ->postJson(route('agent.conversations.reply', $conversation), [
+                'message' => 'Este mensaje tiene resultado incierto.',
+            ])
+            ->assertStatus(502)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'No se pudo confirmar si Telegram recibió el mensaje. No se registró como enviado; no se reintentará automáticamente.');
+
+        $this->assertDatabaseMissing('messages', [
+            'conversation_id' => $conversation->id,
+            'sender' => Message::SENDER_AGENT,
+            'message' => 'Este mensaje tiene resultado incierto.',
+        ]);
+        $this->assertSame(ConversationState::ATTENDING, $conversation->fresh()->state);
     }
 }

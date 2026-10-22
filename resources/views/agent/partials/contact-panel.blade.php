@@ -11,7 +11,26 @@
     // nombrar las claves en español o inglés según el endpoint.
     $phone = $patient['telefono'] ?? $patient['phone'] ?? null;
     $email = $patient['email'] ?? $patient['correo'] ?? null;
-    $document = $patient['numero_documento'] ?? $clinic['identifiers']['document'] ?? null;
+    $document = $patient['numero_documento'] ?? null;
+    $slots = $conversation->getContextValue('slots', []);
+    $declaredService = is_array($slots) ? ($slots['service'] ?? null) : null;
+    $declaredDate = is_array($slots) ? ($slots['date'] ?? null) : null;
+    $declaredTime = is_array($slots) ? ($slots['time'] ?? null) : null;
+    $uncertainCreation = is_array($slots) && ($slots['appointment_creation_status'] ?? null) === 'unknown';
+    $uncertainOperation = is_array($slots) && ($slots['appointment_operation_status'] ?? null) === 'unknown';
+    $uncertainOperationLabel = match (is_array($slots) ? ($slots['appointment_operation'] ?? null) : null) {
+        'confirm' => 'confirmar',
+        'cancel' => 'cancelar',
+        'reschedule' => 'reprogramar',
+        default => 'gestionar',
+    };
+    $identityLabel = match ($clinic['patient_status'] ?? 'not_found') {
+        'verified' => 'Identificado en CABANILLAS',
+        'ambiguous' => 'Identidad ambigua',
+        'technical_error' => 'No se pudo verificar',
+        'invalid_data' => 'Datos no verificables',
+        default => $clinic['has_identifiers'] ? 'Paciente no encontrado' : 'No identificado',
+    };
 @endphp
 
 <section class="contact-panel" aria-label="Datos del contacto">
@@ -22,6 +41,18 @@
         <dd>{{ $conversation->displayName() }}</dd>
         <dt>Canal</dt>
         <dd>{{ $conversation->channelLabel() }}</dd>
+        <dt>Identificación</dt>
+        <dd><span class="status-note status-note--{{ ($clinic['patient_status'] ?? '') === 'verified' ? 'ok' : 'pending' }}">{{ $identityLabel }}</span></dd>
+        <dt>Servicio solicitado</dt>
+        <dd>{{ $declaredService ?: 'No indicado' }}</dd>
+        <dt>Preferencia</dt>
+        <dd>
+            @if ($declaredDate || $declaredTime)
+                {{ $declaredDate ?: 'Fecha no indicada' }}{{ $declaredTime ? ' · '.$declaredTime : '' }}
+            @else
+                No indicada
+            @endif
+        </dd>
         <dt>Estado</dt>
         <dd>@include('agent.partials.state-badge', ['state' => $conversation->state])</dd>
         <dt>Agente</dt>
@@ -36,11 +67,33 @@
         <dd>{{ $conversation->closedByUser?->name ?? '—' }}</dd>
     </dl>
 
-    <h3>Datos en CABANILLAS</h3>
+    @if ($uncertainCreation || $uncertainOperation)
+        <p class="alert alert--warning">
+            No se pudo confirmar el resultado de
+            @if ($uncertainCreation && $uncertainOperation)
+                la creación y la operación de la cita
+            @elseif ($uncertainCreation)
+                la creación de la cita
+            @else
+                la operación para {{ $uncertainOperationLabel }} la cita
+            @endif.
+            Verifica el estado directamente en CABANILLAS antes de repetirla.
+        </p>
+    @endif
+
+    <h3>Datos del paciente</h3>
 
     @if (! $clinic['has_identifiers'])
-        <p class="muted">El chatbot todavía no identificó al paciente en esta conversación.</p>
+        <p class="muted">El chatbot todavía no identificó al paciente; no hay datos suficientes para verificarlo en CABANILLAS.</p>
+    @elseif (($clinic['patient_status'] ?? '') === 'ambiguous')
+        <p class="alert alert--warning">
+            No se muestran datos clínicos porque el documento coincide con varios pacientes en CABANILLAS.
+            Un agente debe verificar la identidad antes de continuar.
+        </p>
     @else
+        <p class="muted muted--sm">
+            Los datos declarados por el paciente no se consideran verificados hasta coincidir con CABANILLAS.
+        </p>
         @if (! $clinic['ok'])
             <p class="alert alert--warning">
                 No se pudo consultar la API clínica: {{ $clinic['error'] }}
@@ -48,6 +101,14 @@
             </p>
         @endif
 
+        @if (($clinic['patient_status'] ?? '') !== 'verified')
+            <p class="alert alert--warning">
+                {{ $clinic['error'] ?? 'La información del paciente no pudo verificarse en CABANILLAS.' }}
+                Solo se muestran datos declarados en la conversación.
+            </p>
+        @endif
+
+        @if (($clinic['patient_status'] ?? '') === 'verified')
         <dl class="facts">
             <dt>Nombre completo</dt>
             <dd>{{ $patientName ?? '—' }}</dd>
@@ -67,8 +128,18 @@
             <dt>Cita en contexto</dt>
             <dd>{{ $clinic['identifiers']['appointment_id'] ?? '—' }}</dd>
         </dl>
+        @else
+            <dl class="facts">
+                <dt>Documento declarado</dt>
+                <dd>{{ $clinic['declared']['document'] ?? '—' }}</dd>
+                <dt>Servicio declarado</dt>
+                <dd>{{ $clinic['declared']['service'] ?? '—' }}</dd>
+                <dt>Preferencia declarada</dt>
+                <dd>{{ $clinic['declared']['date'] ?? '—' }}{{ ! empty($clinic['declared']['time']) ? ' · '.$clinic['declared']['time'] : '' }}</dd>
+            </dl>
+        @endif
 
-        @if ($clinic['ok'] && $patient !== null && $phone === null && $email === null)
+        @if ($clinic['patient_status'] === 'verified' && $clinic['ok'] && $patient !== null && $phone === null && $email === null)
             <p class="muted muted--sm">CABANILLAS no devolvió teléfono ni correo para este paciente.</p>
         @endif
 

@@ -69,7 +69,9 @@ class ClinicInfoService
      *     identifiers: array{patient_id: int|null, document: string|null, appointment_id: int|null},
      *     has_identifiers: bool,
      *     ok: bool,
+     *     patient_status: string,
      *     error: string|null,
+     *     declared: array<string, mixed>,
      *     patient: array<string, mixed>|null,
      *     appointment: array<string, mixed>|null,
      *     appointments: array<int, array<string, mixed>>,
@@ -88,7 +90,9 @@ class ClinicInfoService
             'identifiers' => $identifiers,
             'has_identifiers' => $hasIdentifiers,
             'ok' => true,
+            'patient_status' => $identifiers['patient_id'] !== null ? 'verified' : 'not_found',
             'error' => null,
+            'declared' => $this->declaredData($conversation),
             'patient' => null,
             'appointment' => null,
             'appointments' => [],
@@ -107,7 +111,18 @@ class ClinicInfoService
                     fn (): array => $this->agenda->patientsByDocument((string) $identifiers['document']),
                 );
 
-                $info['patient'] = is_array($patients) ? ($patients[0] ?? null) : null;
+                if (count($patients) === 1) {
+                    $info['patient'] = $patients[0];
+                    $info['patient_status'] = 'verified';
+                } elseif ($patients === []) {
+                    $info['patient_status'] = 'not_found';
+                    return $info;
+                } else {
+                    $info['patient_status'] = 'ambiguous';
+                    $info['error'] = 'CABANILLAS devolvió varias coincidencias para el documento.';
+
+                    return $info;
+                }
             }
 
             if ($identifiers['patient_id'] !== null) {
@@ -129,9 +144,11 @@ class ClinicInfoService
             }
         } catch (ClinicApiException $exception) {
             $info['ok'] = false;
+            $info['patient_status'] = $this->isInvalidDataException($exception) ? 'invalid_data' : 'technical_error';
             $info['error'] = $exception->getMessage();
         } catch (Throwable $exception) {
             $info['ok'] = false;
+            $info['patient_status'] = 'technical_error';
             $info['error'] = 'No se pudo consultar CABANILLAS en este momento.';
             Log::warning('No se pudo consultar la información clínica del contacto.', [
                 'conversation_id' => $conversation->id,
@@ -160,6 +177,7 @@ class ClinicInfoService
         $summary = [
             'consulted' => true,
             'ok' => true,
+            'patient_status' => 'not_found',
             'error' => null,
             'patient' => null,
         ];
@@ -170,12 +188,20 @@ class ClinicInfoService
                 fn (): array => $this->agenda->patientsByDocument($document),
             );
 
-            $summary['patient'] = is_array($patients) ? ($patients[0] ?? null) : null;
+            if (count($patients) === 1) {
+                $summary['patient'] = $patients[0];
+                $summary['patient_status'] = 'verified';
+            } elseif (count($patients) > 1) {
+                $summary['patient_status'] = 'ambiguous';
+                $summary['error'] = 'CABANILLAS devolvió varias coincidencias para el documento.';
+            }
         } catch (ClinicApiException $exception) {
             $summary['ok'] = false;
+            $summary['patient_status'] = $this->isInvalidDataException($exception) ? 'invalid_data' : 'technical_error';
             $summary['error'] = $exception->getMessage();
         } catch (Throwable $exception) {
             $summary['ok'] = false;
+            $summary['patient_status'] = 'technical_error';
             $summary['error'] = 'No se pudo consultar CABANILLAS en este momento.';
             Log::warning('No se pudo consultar el paciente en CABANILLAS.', [
                 'document' => $document,
@@ -184,6 +210,30 @@ class ClinicInfoService
         }
 
         return $summary;
+    }
+
+    /** @return array<string, mixed> */
+    private function declaredData(Conversation $conversation): array
+    {
+        $slots = $conversation->getContextValue('slots', []);
+
+        if (! is_array($slots)) {
+            return [];
+        }
+
+        return array_filter([
+            'document' => $slots['patient_document'] ?? null,
+            'service' => $slots['service'] ?? null,
+            'date' => $slots['date'] ?? null,
+            'time' => $slots['time'] ?? null,
+        ], static fn (mixed $value): bool => $value !== null && $value !== '');
+    }
+
+    private function isInvalidDataException(ClinicApiException $exception): bool
+    {
+        return str_contains($exception->getMessage(), 'formato')
+            || str_contains($exception->getMessage(), 'datos incompletos')
+            || str_contains($exception->getMessage(), 'datos mínimos');
     }
 
     /**

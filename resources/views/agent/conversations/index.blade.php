@@ -22,7 +22,7 @@
                 </div>
 
                 <p class="muted muted--sm">
-                    {{ $stats['waiting'] }} esperando · {{ $stats['attending'] }} en atención · {{ $stats['unread'] }} mensajes sin leer
+                    {{ $stats['waiting'] }} pendientes · {{ $stats['attending'] }} en atención · {{ $stats['unread'] }} mensajes sin leer
                 </p>
             </div>
 

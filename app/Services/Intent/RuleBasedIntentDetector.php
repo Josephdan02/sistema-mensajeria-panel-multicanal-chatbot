@@ -46,7 +46,7 @@ class RuleBasedIntentDetector implements IntentDetectorInterface
             ['pattern' => '/\b(?:horarios?|abren|cierran|atienden)\b/u', 'score' => 50],
         ],
         'human_handoff' => [
-            ['pattern' => '/\b(?:hablar\s+con\s+(?:una\s+)?persona|hablar\s+con\s+alguien|agente\s+humano|persona\s+real|operador)\b/u', 'score' => 100],
+            ['pattern' => '/\b(?:hablar\s+con\s+(?:una\s+)?persona|hablar\s+con\s+alguien|hablar\s+con\s+(?:un|alg[uú]n)\s+miembro\s+del\s+personal|hablar\s+con\s+el\s+personal|quiero\s+(?:hablar\s+con\s+)?(?:un\s+)?asesor|necesito\s+un\s+asesor|agente\s+humano|persona\s+real|operador)\b/u', 'score' => 100],
         ],
         'greeting' => [
             ['pattern' => '/\b(?:hola|buenas|hey|buenos\s+d[ií]as|buenas\s+(?:tardes|noches)|saludos)\b/u', 'score' => 20],

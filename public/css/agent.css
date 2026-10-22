@@ -462,6 +462,26 @@ label { display: block; font-size: .82rem; font-weight: 600; color: var(--muted)
 .chat-head__meta { margin: 0; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
 .chat-head__actions { display: flex; gap: .35rem; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
 .chat-head__actions form { margin: 0; }
+.action-status { color: var(--muted); font-size: .82rem; font-weight: 600; padding: .35rem 0; }
+.action-menu { position: relative; }
+.action-menu summary { list-style: none; }
+.action-menu summary::-webkit-details-marker { display: none; }
+.action-menu__items {
+    position: absolute;
+    right: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+    min-width: 12rem;
+    margin-top: .3rem;
+    padding: .5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+.action-menu__items form { display: block; }
 
 /* Contenedor con posición relativa para el aviso flotante de nuevos mensajes. */
 .chat-thread-wrap {
@@ -633,6 +653,9 @@ html.has-js .chat-reply__field textarea { resize: none; overflow-y: auto; }
 .facts { margin: 0 0 .5rem; display: grid; grid-template-columns: 42% 58%; gap: .15rem 0; font-size: .84rem; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; font-weight: 600; }
+.status-note { display: inline-block; padding: .12rem .4rem; border-radius: 999px; font-size: .75rem; }
+.status-note--ok { background: #e2f5ea; color: var(--ok); }
+.status-note--pending { background: #fdf1dd; color: var(--warn); }
 
 /* ------------------------------------------------------------- Tablas */
 
@@ -741,6 +764,5 @@ html.has-js .chat-reply__field textarea { resize: none; overflow-y: auto; }
     .chat-head__actions { margin-left: 0; }
     .topnav { margin-left: 0; width: 100%; }
 }
-
 
 

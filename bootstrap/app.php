@@ -18,6 +18,10 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        if (env('APP_ENV') === 'local') {
+            $middleware->trustProxies(at: '*');
+        }
+
         $middleware->alias([
             'agent' => App\Http\Middleware\EnsureUserIsAgent::class,
             'supervisor' => App\Http\Middleware\EnsureUserIsSupervisor::class,
@@ -26,4 +30,3 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->create();
-

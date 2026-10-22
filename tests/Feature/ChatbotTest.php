@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\ConversationState;
 use App\Models\Conversation;
 use App\Models\MockAppointment;
 use App\Services\External\AI\AIServiceInterface;
@@ -9,6 +10,7 @@ use App\Services\External\Agenda\AgendaServiceInterface;
 use App\Services\External\Agenda\MockAgendaService;
 use App\Services\Intent\RuleBasedIntentDetector;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -194,6 +196,677 @@ class ChatbotTest extends TestCase
                 'message' => $message,
             ])->assertJsonFragment(['intent' => $intent]);
         }
+    }
+
+    public function test_services_menu_starts_service_information_flow(): void
+    {
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'services-menu-user',
+            'message' => '5',
+        ])->assertOk()
+            ->assertJsonPath('data.intent', 'services')
+            ->assertJsonPath('message', 'Nuestros servicios principales son: limpieza dental, ortodoncia, blanqueamiento, extracciones, endodoncia e implantes. ¿Sobre cuál deseas más información?');
+
+        $conversation = Conversation::findOrFail($response->json('data.conversation_id'));
+
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info', $conversation->getContextValue('awaiting'));
+    }
+
+    public function test_official_treatment_catalog_contains_all_ten_treatments(): void
+    {
+        $catalog = config('chatbot.services');
+        $official = [
+            'Ortodoncia',
+            'Limpieza dental profunda',
+            'Blanqueamiento dental',
+            'Carillas dentales',
+            'Endodoncia',
+            'Implantes dentales',
+            'Odontopediatría',
+            'Prótesis dental',
+            'Diseño de sonrisa',
+            'Cirugías dentales',
+        ];
+
+        $names = array_column($catalog, 'name');
+
+        foreach ($official as $name) {
+            $this->assertContains($name, $names, "Falta {$name} en el catálogo.");
+        }
+
+        $this->assertSame('Ortodoncia', $catalog['ortodoncia']['name']);
+        $this->assertSame(
+            'Alineación dental con tratamientos modernos para mejorar la estética, la mordida y la función.',
+            $catalog['ortodoncia']['description'],
+        );
+        $this->assertSame(
+            ['Prevención de sarro', 'Encías saludables', 'Sensación de frescura'],
+            $catalog['limpieza_dental_profunda']['benefits'],
+        );
+    }
+
+    public function test_known_service_information_finishes_without_gemini_or_agenda(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $first = $this->postJson('/api/chat', [
+            'userIdentifier' => 'service-info-user',
+            'message' => '5',
+        ])->assertOk();
+
+        $conversationId = $first->json('data.conversation_id');
+
+        $second = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-user',
+            'message' => 'limpieza dental',
+        ])->assertOk()
+            ->assertJsonPath('data.intent', 'services')
+            ->assertJsonPath('message', 'Sobre "Limpieza dental": con gusto te damos más detalles. Un miembro del equipo puede confirmarte precio exacto y disponibilidad. ¿Quieres que te ayude a agendar una cita para este servicio?');
+
+        $conversation = Conversation::findOrFail($conversationId);
+
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Limpieza dental', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_service_info_confirmation_yes_starts_appointment_flow(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $first = $this->postJson('/api/chat', [
+            'userIdentifier' => 'service-info-yes-user',
+            'message' => '5',
+        ])->assertOk();
+
+        $conversationId = $first->json('data.conversation_id');
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-yes-user',
+            'message' => 'limpieza dental',
+        ])->assertOk();
+
+        $response = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-yes-user',
+            'message' => 'sí',
+        ])->assertOk();
+
+        $this->assertStringContainsString('¿Qué fecha', $response->json('message'));
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame('appointment_date', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Limpieza dental', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_service_info_confirmation_no_closes_state(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $first = $this->postJson('/api/chat', [
+            'userIdentifier' => 'service-info-no-user',
+            'message' => '5',
+        ])->assertOk();
+
+        $conversationId = $first->json('data.conversation_id');
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-no-user',
+            'message' => 'limpieza dental',
+        ])->assertOk();
+
+        $response = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-no-user',
+            'message' => 'no',
+        ])->assertOk();
+
+        $this->assertStringContainsString('De acuerdo, cancelé el proceso', $response->json('message'));
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame(ConversationState::IDLE, $conversation->state);
+        $this->assertNull($conversation->getContextValue('awaiting'));
+        $this->assertSame([], $conversation->context);
+    }
+
+    public function test_service_info_confirmation_maybe_repeats_question(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $first = $this->postJson('/api/chat', [
+            'userIdentifier' => 'service-info-maybe-user',
+            'message' => '5',
+        ])->assertOk();
+
+        $conversationId = $first->json('data.conversation_id');
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-maybe-user',
+            'message' => 'limpieza dental',
+        ])->assertOk();
+
+        $response = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-maybe-user',
+            'message' => 'tal vez',
+        ])->assertOk();
+
+        $this->assertStringContainsString('¿Quieres que te ayude a agendar', $response->json('message'));
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Limpieza dental', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_affirmation_outside_service_info_state_does_not_start_appointment(): void
+    {
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'affirmation-outside-user',
+            'message' => 'sí',
+        ])->assertOk();
+
+        $response->assertJsonPath('data.intent', 'unknown');
+
+        $this->assertDatabaseMissing('mock_appointments', [
+            'user_identifier' => 'affirmation-outside-user',
+        ]);
+
+        $conversation = Conversation::findOrFail($response->json('data.conversation_id'));
+        $this->assertSame(ConversationState::IDLE, $conversation->state);
+        $this->assertNull($conversation->getContextValue('awaiting'));
+    }
+
+    public function test_each_official_treatment_information_uses_catalog_description_and_benefits(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $agenda->expects($this->never())->method('getAppointment');
+        $agenda->expects($this->never())->method('cancelAppointment');
+        $agenda->expects($this->never())->method('rescheduleAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $checked = 0;
+
+        foreach (config('chatbot.services') as $key => $entry) {
+            if (! isset($entry['description'])) {
+                // limpieza_dental y extraccion_dental se conservan solo por compatibilidad.
+                continue;
+            }
+
+            $checked++;
+            $user = "service-info-catalog-{$key}";
+            $menu = $this->postJson('/api/chat', ['userIdentifier' => $user, 'message' => '5'])
+                ->assertOk();
+            $conversationId = $menu->json('data.conversation_id');
+
+            $message = $this->postJson('/api/chat', [
+                'conversation_id' => $conversationId,
+                'userIdentifier' => $user,
+                'message' => $entry['name'],
+            ])->assertOk()->json('message');
+
+            $this->assertStringContainsString('Sobre "'.$entry['name'].'"', $message);
+            $this->assertStringContainsString($entry['description'], $message);
+
+            if (isset($entry['benefits']) && $entry['benefits'] !== []) {
+                $this->assertStringContainsString('Beneficios: '.implode(', ', $entry['benefits']).'.', $message);
+            } else {
+                $this->assertStringNotContainsString('Beneficios:', $message);
+            }
+
+            $conversation = Conversation::findOrFail($conversationId);
+            $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+            $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+            $this->assertSame($entry['name'], $conversation->getContextValue('slots.service'));
+        }
+
+        $this->assertSame(10, $checked, 'Los 10 tratamientos oficiales deben tener descripción en el catálogo.');
+    }
+
+    public function test_benefits_are_included_only_when_defined_in_the_catalog(): void
+    {
+        $cases = [
+            'ortodoncia' => true,
+            'protesis_dental' => false,
+            'odontopediatria' => false,
+            'cirugias_dentales' => false,
+        ];
+
+        foreach ($cases as $key => $expectsBenefits) {
+            $entry = config("chatbot.services.{$key}");
+            $user = "service-info-benefits-{$key}";
+            $menu = $this->postJson('/api/chat', ['userIdentifier' => $user, 'message' => '5'])
+                ->assertOk();
+            $conversationId = $menu->json('data.conversation_id');
+
+            $message = $this->postJson('/api/chat', [
+                'conversation_id' => $conversationId,
+                'userIdentifier' => $user,
+                'message' => $entry['name'],
+            ])->assertOk()->json('message');
+
+            if ($expectsBenefits) {
+                $this->assertStringContainsString('Beneficios:', $message);
+                $this->assertStringContainsString($entry['benefits'][0], $message);
+            } else {
+                $this->assertStringNotContainsString('Beneficios:', $message);
+                $this->assertStringContainsString($entry['description'], $message);
+            }
+        }
+    }
+
+    public function test_unknown_service_in_service_info_asks_clarification_and_allows_reformulation(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $first = $this->postJson('/api/chat', ['userIdentifier' => 'service-info-unknown', 'message' => '5'])
+            ->assertOk();
+        $conversationId = $first->json('data.conversation_id');
+
+        $clarification = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-unknown',
+            'message' => 'tratamiento cosmético especial',
+        ])->assertOk()->json('message');
+
+        $this->assertSame('No encontré ese servicio. Indícame un servicio válido, por favor.', $clarification);
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info', $conversation->getContextValue('awaiting'));
+
+        $reformulated = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-unknown',
+            'message' => 'ortodoncia',
+        ])->assertOk()->json('message');
+
+        $this->assertStringContainsString(
+            config('chatbot.services.ortodoncia.description'),
+            $reformulated,
+        );
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Ortodoncia', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_ambiguous_service_selection_in_service_info_asks_for_clarification(): void
+    {
+        $first = $this->postJson('/api/chat', ['userIdentifier' => 'service-info-ambiguous', 'message' => '5'])
+            ->assertOk();
+        $conversationId = $first->json('data.conversation_id');
+
+        $message = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-ambiguous',
+            'message' => 'limpieza dental o blanqueamiento',
+        ])->assertOk()->json('message');
+
+        $this->assertSame('No encontré ese servicio. Indícame un servicio válido, por favor.', $message);
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame('service_info', $conversation->getContextValue('awaiting'));
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => 'service-info-ambiguous',
+            'message' => 'blanqueamiento',
+        ])->assertOk();
+
+        $conversation->refresh();
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Blanqueamiento dental', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_second_treatment_can_be_consulted_in_the_same_conversation(): void
+    {
+        $user = 'service-info-second-treatment';
+
+        $first = $this->postJson('/api/chat', ['userIdentifier' => $user, 'message' => '5'])
+            ->assertOk();
+        $conversationId = $first->json('data.conversation_id');
+
+        $firstAnswer = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => 'ortodoncia',
+        ])->assertOk()->json('message');
+
+        $this->assertStringContainsString(
+            config('chatbot.services.ortodoncia.description'),
+            $firstAnswer,
+        );
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '5',
+        ])->assertOk()->assertJsonPath('data.intent', 'services');
+
+        $secondAnswer = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => 'blanqueamiento',
+        ])->assertOk()->json('message');
+
+        $this->assertStringContainsString(
+            config('chatbot.services.blanqueamiento_dental.description'),
+            $secondAnswer,
+        );
+
+        $conversation = Conversation::findOrFail($conversationId);
+        $this->assertSame(ConversationState::IN_PROGRESS, $conversation->state);
+        $this->assertSame('service_info_confirmation', $conversation->getContextValue('awaiting'));
+        $this->assertSame('Blanqueamiento dental', $conversation->getContextValue('slots.service'));
+    }
+
+    public function test_price_and_duration_questions_do_not_invent_unverified_data(): void
+    {
+        $user = 'service-info-unverified';
+
+        $first = $this->postJson('/api/chat', ['userIdentifier' => $user, 'message' => '5'])
+            ->assertOk();
+        $conversationId = $first->json('data.conversation_id');
+
+        $priceAnswer = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '¿Cuánto cuesta la ortodoncia?',
+        ])->assertOk()->json('message');
+
+        $this->assertStringContainsString('Sobre "Ortodoncia"', $priceAnswer);
+        $this->assertStringContainsString(config('chatbot.services.ortodoncia.description'), $priceAnswer);
+        $this->assertStringContainsString('deben confirmarse con la clínica o con un agente', $priceAnswer);
+        $this->assertStringNotContainsString('$', $priceAnswer);
+        $this->assertStringNotContainsString('€', $priceAnswer);
+        $this->assertStringNotContainsString('S/.', $priceAnswer);
+        $this->assertDoesNotMatchRegularExpression(
+            '/\b\d+(?:[.,]\d+)?\s*(?:soles|usd|dolares|dólares|minutos|horas)\b/i',
+            $priceAnswer,
+        );
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '5',
+        ])->assertOk();
+
+        $durationAnswer = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '¿Cuánto dura la limpieza dental profunda?',
+        ])->assertOk()->json('message');
+
+        $this->assertStringContainsString('Sobre "Limpieza dental profunda"', $durationAnswer);
+        $this->assertStringContainsString('deben confirmarse con la clínica o con un agente', $durationAnswer);
+        $this->assertDoesNotMatchRegularExpression(
+            '/\b\d+\s*(?:minutos|horas|días|dias)\b/i',
+            $durationAnswer,
+        );
+
+        $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '5',
+        ])->assertOk();
+
+        $genericPrice = $this->postJson('/api/chat', [
+            'conversation_id' => $conversationId,
+            'userIdentifier' => $user,
+            'message' => '¿Cuánto cuesta?',
+        ])->assertOk()->json('message');
+
+        $this->assertSame(
+            'Precios, horarios, disponibilidad de citas y duración deben confirmarse con la clínica o con un agente.',
+            $genericPrice,
+        );
+    }
+
+    public function test_known_treatment_in_free_message_while_idle_answers_from_catalog_without_ai(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $agenda->expects($this->never())->method('getAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'idle-treatment-user',
+            'message' => 'blanqueamiento',
+        ])->assertOk()
+            ->assertJsonPath('data.intent', 'unknown');
+
+        $message = $response->json('message');
+        $this->assertStringContainsString('Sobre "Blanqueamiento dental"', $message);
+        $this->assertStringContainsString(
+            config('chatbot.services.blanqueamiento_dental.description'),
+            $message,
+        );
+
+        $conversation = Conversation::findOrFail($response->json('data.conversation_id'));
+        $this->assertSame(ConversationState::IDLE, $conversation->state);
+        $this->assertNull($conversation->getContextValue('awaiting'));
+    }
+
+    public function test_unrecognized_free_message_uses_gemini_reply_when_available(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('respuesta libre de prueba');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-reply-user',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertSame('respuesta libre de prueba', $response->json('message'));
+    }
+
+    public function test_gemini_diagnosis_is_replaced_by_safe_redirect(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('Por lo que describes, tienes pulpitis y necesitas un tratamiento de conducto.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-diagnosis',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $message = $response->json('message');
+        $this->assertStringNotContainsString('pulpitis', $message);
+        $this->assertStringContainsString('clínica', $message);
+    }
+
+    public function test_gemini_guarantee_is_replaced_by_safe_redirect(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('El resultado de tu tratamiento está 100% garantizado, quedará perfecto.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-guarantee',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertStringNotContainsString('100%', $response->json('message'));
+    }
+
+    public function test_gemini_unverified_price_is_replaced_without_agenda_calls(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('Ese procedimiento cuesta S/ 300 en nuestra clínica.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $agenda = $this->createMock(AgendaServiceInterface::class);
+        $agenda->expects($this->never())->method('checkAvailability');
+        $agenda->expects($this->never())->method('requestAppointment');
+        $agenda->expects($this->never())->method('cancelAppointment');
+        $agenda->expects($this->never())->method('rescheduleAppointment');
+        $this->app->instance(AgendaServiceInterface::class, $agenda);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-price',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $message = $response->json('message');
+        $this->assertStringNotContainsString('300', $message);
+        $this->assertStringContainsString('confirmarse con la clínica', $message);
+    }
+
+    public function test_gemini_false_cancel_claim_is_replaced(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('Listo, tu cita fue cancelada correctamente.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-cancel',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertStringContainsString('no confirma ninguna gestión', $response->json('message'));
+    }
+
+    public function test_gemini_false_create_claim_is_replaced(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('He registrado tu cita para mañana en el sistema.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-create',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertStringContainsString('no confirma ninguna gestión', $response->json('message'));
+    }
+
+    public function test_gemini_false_reschedule_claim_is_replaced(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willReturn('Tu cita fue reprogramada para el viernes.');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-guard-reschedule',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertStringContainsString('no confirma ninguna gestión', $response->json('message'));
+    }
+
+    public function test_catalog_answers_do_not_invoke_gemini_guard_path(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->never())->method('generateReply');
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'guard-catalog-user',
+            'message' => 'blanqueamiento',
+        ])->assertOk();
+
+        $this->assertStringContainsString('Sobre "Blanqueamiento dental"', $response->json('message'));
+    }
+
+    public function test_unrecognized_free_message_falls_back_locally_when_gemini_fails_without_logging_sensitive_data(): void
+    {
+        $ai = $this->createMock(AIServiceInterface::class);
+        $ai->expects($this->once())
+            ->method('generateReply')
+            ->willThrowException(new RuntimeException('Gemini caído'));
+        $this->app->instance(AIServiceInterface::class, $ai);
+
+        Log::spy();
+
+        $response = $this->postJson('/api/chat', [
+            'userIdentifier' => 'gemini-fallback-user',
+            'message' => 'xyz sin sentido',
+        ])->assertOk();
+
+        $this->assertSame(
+            'Disculpa, no logré entender tu mensaje. ¿Podrías reformularlo? También puedo ponerte en contacto con una persona si lo prefieres.',
+            $response->json('message'),
+        );
+
+        Log::shouldHaveReceived('warning')->withArgs(function (string $message, array $context): bool {
+            $serialized = $message.' '.json_encode($context);
+
+            return ! preg_match('/\d{7,}/', $serialized)
+                && ! str_contains($serialized, 'test-key');
+        })->once();
     }
 
     public function test_rule_based_detector_prioritizes_specific_intent_patterns(): void

@@ -80,6 +80,10 @@ class ConversationManager
     {
         if ($conversation->state === ConversationState::CLOSED) {
             $conversation->state = ConversationState::IDLE;
+            $conversation->assigned_agent_id = null;
+            $conversation->assigned_at = null;
+            $conversation->closed_at = null;
+            $conversation->closed_by = null;
         }
     }
 }

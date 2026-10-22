@@ -50,30 +50,54 @@
                     </p>
                 </div>
 
-                <div class="chat-head__actions">
-                    <form method="POST" action="{{ route('agent.conversations.take', $conversation) }}">
-                        @csrf
-                        <input type="hidden" name="filter" value="{{ $filter }}">
-                        <button type="submit" class="btn btn--primary btn--sm">Tomar</button>
-                    </form>
+                @if ($conversation->getContextValue('slots.appointment_creation_status') === 'unknown' || $conversation->getContextValue('slots.appointment_operation_status') === 'unknown')
+                    <p class="alert alert--warning">
+                        Verifica en CABANILLAS el resultado incierto de la operación de la cita antes de devolver esta conversación al bot.
+                    </p>
+                @endif
 
-                    <form method="POST" action="{{ route('agent.conversations.queue', $conversation) }}">
-                        @csrf
-                        <input type="hidden" name="filter" value="{{ $filter }}">
-                        <button type="submit" class="btn btn--sm">Devolver a la cola</button>
-                    </form>
+                <div class="chat-head__actions" aria-label="Acción principal">
+                    @if ($conversation->state->isWaitingForAgent() || $conversation->state->isClosed())
+                        <form method="POST" action="{{ route('agent.conversations.take', $conversation) }}">
+                            @csrf
+                            <input type="hidden" name="filter" value="{{ $filter }}">
+                            <button type="submit" class="btn btn--primary btn--sm">Atender conversación</button>
+                        </form>
+                    @elseif ($conversation->state->isHumanControlled())
+                        <span class="action-status">Atención en curso</span>
+                    @else
+                        <span class="action-status">Atendida por el bot</span>
+                    @endif
 
-                    <form method="POST" action="{{ route('agent.conversations.release', $conversation) }}">
-                        @csrf
-                        <input type="hidden" name="filter" value="{{ $filter }}">
-                        <button type="submit" class="btn btn--sm">Devolver al bot</button>
-                    </form>
+                    <details class="action-menu">
+                        <summary class="btn btn--sm">Más opciones</summary>
+                        <div class="action-menu__items">
+                            @if ($conversation->state->isHumanControlled())
+                                <form method="POST" action="{{ route('agent.conversations.queue', $conversation) }}" data-confirm="¿Devolver esta conversación a la cola de pendientes?">
+                                    @csrf
+                                    <input type="hidden" name="filter" value="{{ $filter }}">
+                                    <button type="submit" class="btn btn--sm">Devolver a pendientes</button>
+                                </form>
 
-                    <form method="POST" action="{{ route('agent.conversations.close', $conversation) }}">
-                        @csrf
-                        <input type="hidden" name="filter" value="{{ $filter }}">
-                        <button type="submit" class="btn btn--danger btn--sm">Cerrar</button>
-                    </form>
+                                <form method="POST" action="{{ route('agent.conversations.release', $conversation) }}" data-confirm="¿Devolver esta conversación al bot? El bot retomará la atención automática.">
+                                    @csrf
+                                    <input type="hidden" name="filter" value="{{ $filter }}">
+                                    <button type="submit" class="btn btn--sm"
+                                            @if ($conversation->getContextValue('slots.appointment_creation_status') === 'unknown' || $conversation->getContextValue('slots.appointment_operation_status') === 'unknown') disabled title="Verifica primero la operación en CABANILLAS" @endif>
+                                        Devolver al bot
+                                    </button>
+                                </form>
+                            @endif
+
+                            @if (! $conversation->state->isClosed())
+                                <form method="POST" action="{{ route('agent.conversations.close', $conversation) }}" data-confirm="¿Finalizar esta atención? La conversación quedará cerrada.">
+                                    @csrf
+                                    <input type="hidden" name="filter" value="{{ $filter }}">
+                                    <button type="submit" class="btn btn--danger btn--sm">Finalizar atención</button>
+                                </form>
+                            @endif
+                        </div>
+                    </details>
                 </div>
             </header>
 
