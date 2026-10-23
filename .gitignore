@@ -1,24 +1,43 @@
-*.log
-.DS_Store
+
+# Variables de entorno y secretos
 .env
-.env.backup
-.env.production
-.phpactor.json
-.phpunit.result.cache
-/.fleet
-/.idea
-/.nova
-/.phpunit.cache
-/.vscode
-/.zed
-/auth.json
-/node_modules
-/public/build
+.env.*
+!.env.example
+
+# Copias y respaldos
+*.backup
+*.bak
+*.old
+*.orig
+*.save
+
+# Dependencias
+/vendor/
+/node_modules/
+
+# Laravel: caché, logs y archivos generados
+/storage/*.key
+/storage/logs/*
+/bootstrap/cache/*
+/public/build/
 /public/hot
 /public/storage
-/storage/*.key
-/storage/pail
-/vendor
-Homestead.json
-Homestead.yaml
+
+# Logs y diagnósticos locales
+*.log
+*.err
+*.out
+tunnel_output.txt
+
+# Archivos auxiliares locales
+_start_tunnel.bat
+register_webhook_renew.php
+encoding_check.php
+
+# Pruebas y herramientas
+.phpunit.result.cache
+/.phpunit.cache
+/.idea/
+/.vscode/
+.DS_Store
 Thumbs.db
