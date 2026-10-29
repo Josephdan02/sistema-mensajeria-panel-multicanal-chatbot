@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Agent\AttachmentController;
 use App\Http\Controllers\Agent\ContactController;
 use App\Http\Controllers\Agent\ConversationController;
 use App\Http\Controllers\Agent\DashboardController;
@@ -59,6 +60,14 @@ Route::prefix('agent')->name('agent.')->group(function (): void {
             ->whereNumber('conversation')->name('conversations.queue');
 
         Route::get('contacts', [ContactController::class, 'index'])->name('contacts.index');
+
+        // Adjuntos de los canales externos (Telegram): siempre dentro del
+        // grupo `agent` (sesión + rol) y con autorización por conversación
+        // (AttachmentPolicy). El archivo nunca se expone por ruta interna.
+        Route::get('attachments/{attachment}', [AttachmentController::class, 'show'])
+            ->whereNumber('attachment')->name('attachments.show');
+        Route::get('attachments/{attachment}/download', [AttachmentController::class, 'download'])
+            ->whereNumber('attachment')->name('attachments.download');
 
         Route::get('profile', [ProfileController::class, 'show'])->name('profile.show');
         Route::put('profile', [ProfileController::class, 'update'])->name('profile.update');

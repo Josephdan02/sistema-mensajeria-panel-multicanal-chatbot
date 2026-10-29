@@ -2,13 +2,18 @@
 
 namespace App\Services\Agent;
 
+use App\Enums\AttachmentStatus;
 use App\Enums\ConversationState;
+use App\Models\Attachment;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\Attachments\OutgoingAttachmentService;
 use App\Services\External\Telegram\TelegramServiceInterface;
 use App\Services\External\Telegram\TelegramSendResult;
 use App\Services\External\WhatsApp\WhatsAppServiceInterface;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -29,6 +34,7 @@ class ConversationHandoffService
     public function __construct(
         private readonly WhatsAppServiceInterface $whatsapp,
         private readonly TelegramServiceInterface $telegram,
+        private readonly OutgoingAttachmentService $attachments,
     ) {
     }
 
@@ -138,6 +144,145 @@ class ConversationHandoffService
         // Canal WhatsApp: la respuesta del agente sale también al número del
         // cliente. En canal web no se hace nada (el panel ya la muestra).
         $this->sendToWhatsAppIfChannel($conversation, $body);
+
+        return $message;
+    }
+
+    /**
+     * Respuesta del agente con un archivo adjunto.
+     *
+     * El archivo se valida y se guarda en el almacenamiento privado antes de
+     * enviarlo. Si Telegram lo rechaza (o el resultado es ambiguo), se elimina
+     * el objeto guardado y NO se persiste el mensaje. El texto se envía como
+     * pie del archivo cuando cabe en el límite del Bot API (1024 caracteres);
+     * si es más largo, se envía como mensaje independiente.
+     */
+    public function replyWithAttachment(
+        Conversation $conversation,
+        User $agent,
+        string $body,
+        UploadedFile $file,
+    ): Message|TelegramSendResult {
+        $outgoing = $this->attachments->prepare($file);
+
+        if (! in_array($conversation->channel, ['telegram', 'web'], true)) {
+            Log::warning('[Adjuntos] Canal sin soporte de adjuntos salientes.', [
+                'conversation_id' => $conversation->id,
+                'channel' => $conversation->channel,
+            ]);
+
+            return TelegramSendResult::failed();
+        }
+
+        $stored = $this->attachments->store($outgoing);
+
+        if (! $stored->stored || $stored->path === null) {
+            Log::error('[Adjuntos] No se pudo guardar el archivo saliente.', [
+                'conversation_id' => $conversation->id,
+                'error' => $stored->error,
+            ]);
+
+            return TelegramSendResult::failed();
+        }
+
+        $storedPath = $stored->path;
+        $caption = null;
+        $sendTextSeparately = false;
+
+        if (mb_strlen($body) > 0) {
+            if (mb_strlen($body) <= 1024) {
+                $caption = $body;
+            } else {
+                $sendTextSeparately = true;
+            }
+        }
+
+        try {
+            if ($conversation->channel === 'telegram') {
+                $fileResult = $this->attachments->send(
+                    (string) $conversation->user_identifier,
+                    $outgoing,
+                    $caption,
+                );
+
+                if (! $fileResult->isSent()) {
+                    $this->attachments->delete($storedPath);
+
+                    Log::warning('[Telegram] No se pudo enviar el archivo del agente.', [
+                        'conversation_id' => $conversation->id,
+                        'status' => $fileResult->status->value,
+                    ]);
+
+                    return $fileResult;
+                }
+
+                if ($sendTextSeparately) {
+                    $textResult = $this->telegram->sendMessage(
+                        (string) $conversation->user_identifier,
+                        $body,
+                    );
+
+                    if (! $textResult->isSent()) {
+                        $this->attachments->delete($storedPath);
+
+                        Log::warning('[Telegram] No se pudo enviar el texto que acompaña al archivo.', [
+                            'conversation_id' => $conversation->id,
+                            'status' => $textResult->status->value,
+                        ]);
+
+                        return $textResult;
+                    }
+                }
+            }
+
+            $message = DB::transaction(function () use ($conversation, $agent, $body, $outgoing, $storedPath): Message {
+                if ($conversation->assigned_agent_id === null) {
+                    $conversation->assigned_agent_id = $agent->id;
+                    $conversation->assigned_at = now();
+                }
+
+                $conversation->state = ConversationState::ATTENDING;
+                $conversation->last_message_at = now();
+                $conversation->closed_at = null;
+                $conversation->closed_by = null;
+                $conversation->save();
+
+                $message = Message::create([
+                    'conversation_id' => $conversation->id,
+                    'sender' => Message::SENDER_AGENT,
+                    'message' => $body,
+                    'intent' => null,
+                    'agent_id' => $agent->id,
+                    'read_at' => now(),
+                ]);
+
+                Attachment::create([
+                    'message_id' => $message->id,
+                    'conversation_id' => $conversation->id,
+                    'channel' => $conversation->channel,
+                    'kind' => $outgoing->kind,
+                    'original_name' => $outgoing->originalName,
+                    'extension' => $outgoing->extension,
+                    'mime_type' => $outgoing->mimeType,
+                    'size' => $outgoing->size,
+                    'status' => AttachmentStatus::AVAILABLE->value,
+                    'storage_path' => $storedPath,
+                ]);
+
+                $this->markAsRead($conversation);
+
+                return $message;
+            });
+        } catch (Throwable $exception) {
+            $this->attachments->delete($storedPath);
+
+            Log::error('[Adjuntos] Error persistiendo el archivo saliente.', [
+                'conversation_id' => $conversation->id,
+                'exception' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
 
         return $message;
     }

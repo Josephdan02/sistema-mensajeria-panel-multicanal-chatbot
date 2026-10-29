@@ -6,6 +6,7 @@ use App\Enums\ConversationState;
 use App\Enums\Intent;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Services\Attachments\AttachmentIngestService;
 use App\Services\Chatbot\ChatbotService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -15,6 +16,8 @@ class TelegramInboundService
     public function __construct(
         private readonly ChatbotService $chatbot,
         private readonly TelegramServiceInterface $telegram,
+        private readonly AttachmentIngestService $attachments,
+        private readonly TelegramAttachmentParser $attachmentParser,
     ) {}
 
     public function handle(array $payload): int
@@ -42,6 +45,7 @@ class TelegramInboundService
                 $this->recordNonTextMessageWhileAgentControls(
                     $conversation,
                     $incoming['attachment'] ?? null,
+                    $incoming['attachment_descriptor'] ?? null,
                 );
 
                 return 1;
@@ -106,6 +110,7 @@ class TelegramInboundService
                 'update_id' => (string) $updateId,
                 'chat_id' => (string) $chatId,
                 'attachment' => $this->detectAttachmentType(is_array($message) ? $message : []),
+                'attachment_descriptor' => $this->attachmentParser->parse(is_array($message) ? $message : []),
             ];
         }
 
@@ -159,20 +164,29 @@ class TelegramInboundService
      * El bot no responde (para no interferir con la atención humana), pero el
      * adjunto queda persistido como mensaje del cliente y sin leer, de modo
      * que el agente lo ve en el hilo y en el contador de pendientes.
+     *
+     * El archivo se descarga de Telegram y se guarda en el almacenamiento
+     * privado; si algo falla, el adjunto queda con su estado de error y el
+     * hilo sigue funcionando.
      */
     private function recordNonTextMessageWhileAgentControls(
         Conversation $conversation,
         ?string $attachment = null,
+        ?TelegramAttachmentDescriptor $descriptor = null,
     ): void {
         $conversation->last_message_at = now();
         $conversation->save();
 
-        Message::create([
+        $message = Message::create([
             'conversation_id' => $conversation->id,
             'sender' => Message::SENDER_USER,
             'message' => $this->describeNonTextMessage($attachment),
             'intent' => Intent::HUMAN_HANDOFF->value,
         ]);
+
+        if ($descriptor !== null) {
+            $this->attachments->ingest($conversation, $message, $descriptor);
+        }
     }
 
     /**

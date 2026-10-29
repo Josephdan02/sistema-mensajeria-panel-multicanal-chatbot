@@ -603,6 +603,98 @@ label { display: block; font-size: .82rem; font-weight: 600; color: var(--muted)
     font-size: .8rem;
 }
 
+/* --- Adjuntos de canales externos ------------------------------------- */
+
+.attachment {
+    margin-top: .5rem;
+    padding-top: .5rem;
+    border-top: 1px solid var(--border);
+}
+
+.attachment__preview {
+    display: block;
+}
+
+.attachment__preview img,
+.attachment-detail__image {
+    display: block;
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    object-fit: contain;
+}
+
+.attachment__player,
+.attachment-detail__player {
+    display: block;
+    width: 100%;
+    max-width: 320px;
+    margin: .25rem 0;
+}
+
+.attachment__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .4rem;
+    margin: .4rem 0 .2rem;
+    font-size: .75rem;
+    color: var(--muted);
+}
+
+.attachment__name {
+    font-weight: 600;
+    color: var(--text);
+    word-break: break-word;
+}
+
+.attachment__type,
+.attachment__size {
+    padding: .05rem .4rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: .68rem;
+    font-weight: 600;
+}
+
+.attachment__download {
+    display: inline-block;
+    margin-top: .2rem;
+    font-size: .78rem;
+    font-weight: 600;
+}
+
+.attachment__error {
+    display: flex;
+    flex-direction: column;
+    gap: .15rem;
+    margin: 0;
+    padding: .45rem .6rem;
+    border-radius: 10px;
+    background: #fdf1f1;
+    border: 1px solid #f2cfcf;
+    color: #943434;
+    font-size: .76rem;
+}
+
+.attachment-detail__title {
+    margin: 0 0 .25rem;
+    font-size: 1.1rem;
+    word-break: break-word;
+}
+
+.attachment-detail__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin: 0 0 1rem;
+    font-size: .8rem;
+    color: var(--muted);
+}
+
 /* Composer: siempre visible al pie del panel de conversación. */
 .chat-reply {
     display: flex;
@@ -629,6 +721,91 @@ html.has-js .chat-reply__field textarea { resize: none; overflow-y: auto; }
 
 .chat-reply__send { flex-shrink: 0; padding: .6rem 1.1rem; }
 .chat-reply__hint { flex-basis: 100%; margin: 0; text-align: right; }
+
+/* Emojis: mismo lenguaje visual que el resto del composer. */
+.chat-reply__emoji-wrap { position: relative; flex-shrink: 0; }
+.chat-reply__emoji {
+    width: 2.6rem;
+    height: 2.6rem;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.chat-reply__emoji:hover { background: var(--surface); }
+.emoji-palette {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + .4rem);
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(4, 2.2rem);
+    gap: .15rem;
+    padding: .45rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 8px 24px rgb(0 0 0 / .12);
+}
+.emoji-palette[hidden] { display: none; }
+.emoji-palette button {
+    width: 2.2rem;
+    height: 2.2rem;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 1.1rem;
+    cursor: pointer;
+}
+.emoji-palette button:hover { background: var(--surface-2); }
+
+/* Adjunto del composer. */
+.chat-reply__attachment { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; flex-shrink: 0; }
+.attachment-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+.attachment-label {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    padding: .55rem .7rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: .78rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.attachment-label:hover { background: var(--surface); }
+.attachment-preview {
+    display: flex;
+    align-items: center;
+    gap: .4rem;
+    max-width: 15rem;
+    color: var(--muted);
+    font-size: .72rem;
+}
+.attachment-preview img {
+    max-height: 2.2rem;
+    max-width: 3.2rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    object-fit: cover;
+}
+.attachment-cancel { padding: .35rem .55rem; font-size: .72rem; }
 
 .chat-reply[data-sending="1"] { opacity: .7; }
 .chat-reply[data-sending="1"] .chat-reply__send,

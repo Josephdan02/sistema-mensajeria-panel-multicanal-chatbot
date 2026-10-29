@@ -6,14 +6,17 @@ use App\Enums\MessageSender;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Message extends Model
 {
     public const SENDER_USER = 'user';
+
     public const SENDER_BOT = 'bot';
 
     /** Orígenes persistidos agregados por el sistema de agentes. */
     public const SENDER_AGENT = 'agent';
+
     public const SENDER_SYSTEM = 'system';
 
     protected $fillable = [
@@ -36,6 +39,12 @@ class Message extends Model
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(Conversation::class);
+    }
+
+    /** Adjuntos enviados por el cliente en este mensaje (0..1). */
+    public function attachment(): HasOne
+    {
+        return $this->hasOne(Attachment::class);
     }
 
     public function agent(): BelongsTo

@@ -381,12 +381,16 @@ class TelegramWebhookTest extends TelegramTestCase
         });
     }
 
+    /**
+     * Cuenta los mensajes enviados por el bot (no cuenta las llamadas a
+     * `getFile` ni las descargas de archivo usadas para recuperar adjuntos).
+     */
     private function assertTelegramSentCount(int $count): void
     {
         $sent = Http::recorded(fn ($request): bool => str_contains(
             $request->url(),
             'api.telegram.org',
-        ))->count();
+        ) && str_contains($request->url(), '/sendMessage'))->count();
 
         $this->assertSame($count, $sent);
     }

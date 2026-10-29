@@ -27,6 +27,21 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
+    /*
+    | Supabase (PostgreSQL + Storage privado) para los adjuntos de los canales
+    | externos. `url` es la URL del proyecto, `service_role_key` es la clave de
+    | servidor: NUNCA debe salir del backend (ni al navegador, ni a los logs).
+    | El bucket debe ser privado; el acceso se hace con URLs firmadas de corta
+    | duración generadas por el servidor.
+    */
+    'supabase' => [
+        'url' => env('SUPABASE_URL'),
+        'service_role_key' => env('SUPABASE_SERVICE_ROLE_KEY'),
+        'bucket' => env('SUPABASE_STORAGE_BUCKET', 'chatbot-attachments'),
+        'signed_url_ttl' => (int) env('SUPABASE_SIGNED_URL_TTL', 120),
+        'timeout' => (int) env('SUPABASE_TIMEOUT', 30),
+    ],
+
     'clinic_api' => [
         'url' => env('CLINIC_API_URL'),
         'key' => env('CLINIC_API_KEY'),

@@ -1,10 +1,12 @@
-
 # Variables de entorno y secretos
 .env
 .env.*
 !.env.example
 
 # Copias y respaldos
+.env.backup
+.env.backup_*
+.env.production
 *.backup
 *.bak
 *.old
@@ -31,13 +33,26 @@ tunnel_output.txt
 
 # Archivos auxiliares locales
 _start_tunnel.bat
+_check_webhook.ps1
 register_webhook_renew.php
 encoding_check.php
+start_services.cmd
+
+# Herramientas de desarrollo
+.phpactor.json
+.phpunit.result.cache
+/.fleet
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+/auth.json
+/node_modules
+/public/build
+/public/hot
+/public/storage
 
 # Pruebas y herramientas
-.phpunit.result.cache
-/.phpunit.cache
-/.idea/
-/.vscode/
-.DS_Store
+/.zed
 Thumbs.db

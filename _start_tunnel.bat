@@ -1,2 +1,0 @@
-@echo off
-"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8081 > C:\laragon\www\chatbot-clinica-telegram\cloudflared_output.txt 2> C:\laragon\www\chatbot-clinica-telegram\cloudflared_error.txt

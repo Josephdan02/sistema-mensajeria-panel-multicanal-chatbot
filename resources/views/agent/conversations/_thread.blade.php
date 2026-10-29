@@ -45,6 +45,8 @@
                 <time class="msg__time">{{ $message->created_at?->format('d/m/Y H:i') }}</time>
             </header>
             <p class="msg__text">{{ $message->message }}</p>
+
+            @include('agent.conversations._attachment', ['attachment' => $message->attachment])
         </article>
     @endif
 @empty

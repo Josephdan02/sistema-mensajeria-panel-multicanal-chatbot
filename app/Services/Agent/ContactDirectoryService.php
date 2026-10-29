@@ -74,8 +74,16 @@ class ContactDirectoryService
                 // ninguna tabla de pacientes.
                 $query->where(function (Builder $inner) use ($search): void {
                     $inner->where('user_identifier', 'like', '%'.$search.'%')
-                        ->orWhere('channel', 'like', '%'.$search.'%')
-                        ->orWhere('context', 'like', '%'.$search.'%');
+                        ->orWhere('channel', 'like', '%'.$search.'%');
+
+                    // PostgreSQL no define el operador LIKE para `json`; hay que
+                    // convertir explícitamente la columna a texto. En MySQL y
+                    // SQLite la comparación directa ya funciona.
+                    if ($inner->getConnection()->getDriverName() === 'pgsql') {
+                        $inner->orWhereRaw('CAST(context AS TEXT) ILIKE ?', ['%'.$search.'%']);
+                    } else {
+                        $inner->orWhere('context', 'like', '%'.$search.'%');
+                    }
                 });
             })
             ->groupBy('user_identifier', 'channel')

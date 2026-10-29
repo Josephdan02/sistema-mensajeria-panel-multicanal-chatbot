@@ -113,14 +113,36 @@
                 </button>
             </div>
 
-            <form class="chat-reply" method="POST" action="{{ route('agent.conversations.reply', $conversation) }}" data-reply-form>
+            <form class="chat-reply" method="POST" action="{{ route('agent.conversations.reply', $conversation) }}" enctype="multipart/form-data" data-reply-form>
                 @csrf
                 <input type="hidden" name="filter" value="{{ $filter }}">
                 <div class="chat-reply__field">
-                    <textarea name="message" rows="1" maxlength="2000" required
+                    <textarea name="message" rows="1" maxlength="2000"
                               placeholder="Escribe la respuesta al cliente..." aria-label="Respuesta al cliente"
                               data-reply-input></textarea>
                     <p class="field-error" data-reply-error hidden></p>
+                </div>
+
+                <div class="chat-reply__emoji-wrap">
+                    <button type="button" class="chat-reply__emoji" data-emoji-toggle
+                            aria-label="Insertar emoji" aria-expanded="false">🙂</button>
+                    <div class="emoji-palette" data-emoji-palette hidden>
+                        @foreach (['😀', '😁', '😂', '🙂', '😊', '😍', '👍', '🙏', '👋', '❤️', '🎉', '✅', '⚠️', '📅', '📄', '🦷'] as $emoji)
+                            <button type="button" data-emoji="{{ $emoji }}" aria-label="Emoji {{ $emoji }}">{{ $emoji }}</button>
+                        @endforeach
+                    </div>
+                </div>
+
+                <div class="chat-reply__attachment">
+                    <input type="file" name="attachment" id="attachment" class="attachment-input"
+                           accept="image/jpeg,image/png,image/webp,video/mp4,audio/mpeg,audio/mp4,audio/ogg,.pdf,.docx,.txt,.gif"
+                           data-attachment-input>
+                    <label for="attachment" class="attachment-label">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        <span>Adjuntar</span>
+                    </label>
+                    <div class="attachment-preview" id="preview" data-attachment-preview hidden></div>
+                    <button type="button" class="btn btn--clear attachment-cancel" data-attachment-cancel hidden>Cancelar</button>
                 </div>
 
                 <button type="submit" class="btn btn--primary chat-reply__send" data-reply-send>Enviar</button>

@@ -31,8 +31,7 @@ class ConversationController extends Controller
         private readonly InboxService $inbox,
         private readonly ConversationHandoffService $handoff,
         private readonly ClinicInfoService $clinic,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): View
     {
@@ -103,21 +102,37 @@ class ConversationController extends Controller
     {
         Gate::authorize('reply', $conversation);
 
-        $message = $this->handoff->reply($conversation, $request->user(), $request->string('message')->toString());
+        $text = $request->string('message')->toString();
+        $file = $request->file('attachment');
 
-        if ($message instanceof TelegramSendResult) {
-            $error = $message->isFailed()
-                ? 'Telegram rechazó el mensaje. No se registró como enviado; puedes decidir manualmente si deseas volver a intentarlo.'
-                : 'No se pudo confirmar si Telegram recibió el mensaje. No se registró como enviado; no se reintentará automáticamente.';
+        if ($file !== null) {
+            if (! in_array($conversation->channel, ['telegram', 'web'], true)) {
+                $error = 'El canal de esta conversación no admite el envío de archivos adjuntos.';
 
-            if ($request->wantsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => $error,
-                ], 502);
+                if ($request->wantsJson()) {
+                    return response()->json(['success' => false, 'message' => $error], 422);
+                }
+
+                return back()->withErrors(['attachment' => $error]);
             }
 
-            return back()->withErrors(['message' => $error]);
+            $message = $this->handoff->replyWithAttachment($conversation, $request->user(), $text, $file);
+
+            if ($message instanceof TelegramSendResult) {
+                return $this->replyError($request, $message);
+            }
+
+            return $this->respond(
+                $request,
+                $conversation,
+                $text !== '' ? 'Mensaje y archivo enviados al cliente.' : 'Archivo enviado al cliente.',
+            );
+        }
+
+        $message = $this->handoff->reply($conversation, $request->user(), $text);
+
+        if ($message instanceof TelegramSendResult) {
+            return $this->replyError($request, $message);
         }
 
         if ($message === null) {
@@ -134,6 +149,23 @@ class ConversationController extends Controller
         }
 
         return $this->respond($request, $conversation, 'Mensaje enviado al cliente.');
+    }
+
+    /** Respuesta uniforme cuando Telegram rechaza o no confirma el envío. */
+    private function replyError(Request $request, TelegramSendResult $result): RedirectResponse|JsonResponse
+    {
+        $error = $result->isFailed()
+            ? 'Telegram rechazó el mensaje. No se registró como enviado; puedes decidir manualmente si deseas volver a intentarlo.'
+            : 'No se pudo confirmar si Telegram recibió el mensaje. No se registró como enviado; no se reintentará automáticamente.';
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => $error,
+            ], 502);
+        }
+
+        return back()->withErrors(['message' => $error]);
     }
 
     /** El agente toma la conversación (queda asignada y en atención pendiente). */
@@ -252,7 +284,7 @@ class ConversationController extends Controller
     private function threadMessages(Conversation $conversation)
     {
         return $conversation->messages()
-            ->with('agent:id,name')
+            ->with(['agent:id,name', 'attachment'])
             ->orderByDesc('id')
             ->limit(200)
             ->get()
@@ -271,5 +303,4 @@ class ConversationController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'role']);
     }
-
 }

@@ -235,6 +235,10 @@
         var sendButton = form ? form.querySelector('[data-reply-send]') : null;
         var hint = form ? form.querySelector('[data-reply-hint]') : null;
         var sendLabel = sendButton ? sendButton.textContent : '';
+        var attachmentInput = form ? form.querySelector('[data-attachment-input]') : null;
+        var attachmentPreview = form ? form.querySelector('[data-attachment-preview]') : null;
+        var attachmentCancel = form ? form.querySelector('[data-attachment-cancel]') : null;
+        var attachmentUrl = null;
 
         var autoGrow = function () {
             if (!composer) {
@@ -244,6 +248,118 @@
             composer.style.height = 'auto';
             composer.style.height = Math.min(composer.scrollHeight, COMPOSER_MAX_HEIGHT) + 'px';
         };
+
+        var clearAttachment = function () {
+            if (attachmentInput) {
+                attachmentInput.value = '';
+            }
+
+            if (attachmentPreview) {
+                attachmentPreview.hidden = true;
+                attachmentPreview.textContent = '';
+            }
+
+            if (attachmentCancel) {
+                attachmentCancel.hidden = true;
+            }
+
+            if (attachmentUrl) {
+                window.URL.revokeObjectURL(attachmentUrl);
+                attachmentUrl = null;
+            }
+        };
+
+        var hasSelectedFile = function () {
+            return !!(attachmentInput && attachmentInput.files && attachmentInput.files.length > 0);
+        };
+
+        if (attachmentInput) {
+            attachmentInput.addEventListener('change', function () {
+                var file = attachmentInput.files && attachmentInput.files[0];
+
+                if (!file) {
+                    clearAttachment();
+                    return;
+                }
+
+                if (attachmentPreview) {
+                    attachmentPreview.hidden = false;
+                    attachmentPreview.textContent = '';
+
+                    var summary = document.createElement('span');
+                    summary.textContent = file.name + ' · ' + Math.max(1, Math.round(file.size / 1024)) + ' KB';
+                    attachmentPreview.appendChild(summary);
+
+                    if (file.type && file.type.indexOf('image/') === 0) {
+                        if (attachmentUrl) {
+                            window.URL.revokeObjectURL(attachmentUrl);
+                        }
+
+                        attachmentUrl = window.URL.createObjectURL(file);
+
+                        var img = document.createElement('img');
+                        img.src = attachmentUrl;
+                        img.alt = 'Previsualización del archivo adjunto';
+                        attachmentPreview.appendChild(img);
+                    }
+                }
+
+                if (attachmentCancel) {
+                    attachmentCancel.hidden = false;
+                }
+            });
+        }
+
+        if (attachmentCancel) {
+            attachmentCancel.addEventListener('click', clearAttachment);
+        }
+
+        // Paleta de emojis: inserta en la posición del cursor sin romper el
+        // envio normal de texto.
+        var emojiToggle = form ? form.querySelector('[data-emoji-toggle]') : null;
+        var emojiPalette = form ? form.querySelector('[data-emoji-palette]') : null;
+
+        var closeEmojiPalette = function () {
+            if (emojiPalette) {
+                emojiPalette.hidden = true;
+            }
+
+            if (emojiToggle) {
+                emojiToggle.setAttribute('aria-expanded', 'false');
+            }
+        };
+
+        if (emojiToggle && emojiPalette) {
+            emojiToggle.addEventListener('click', function (event) {
+                event.stopPropagation();
+                emojiPalette.hidden = !emojiPalette.hidden;
+                emojiToggle.setAttribute('aria-expanded', emojiPalette.hidden ? 'false' : 'true');
+            });
+
+            emojiPalette.addEventListener('click', function (event) {
+                var button = event.target.closest('[data-emoji]');
+
+                if (!button || !composer) {
+                    return;
+                }
+
+                var emoji = button.getAttribute('data-emoji') || '';
+                var start = composer.selectionStart || 0;
+                var end = composer.selectionEnd || 0;
+
+                composer.value = composer.value.slice(0, start) + emoji + composer.value.slice(end);
+                composer.selectionStart = composer.selectionEnd = start + emoji.length;
+                composer.focus();
+                autoGrow();
+                closeEmojiPalette();
+            });
+
+            document.addEventListener('click', function (event) {
+                if (!emojiPalette.hidden && !emojiPalette.contains(event.target) && event.target !== emojiToggle) {
+                    closeEmojiPalette();
+                }
+            });
+        }
 
         if (composer) {
             composer.addEventListener('input', autoGrow);
@@ -258,7 +374,7 @@
 
                 event.preventDefault();
 
-                if (composer.value.trim() === '') {
+                if (composer.value.trim() === '' && !hasSelectedFile()) {
                     return;
                 }
 
@@ -280,14 +396,16 @@
             form.addEventListener('submit', function (event) {
                 var textarea = form.querySelector('textarea[name="message"]');
                 var text = textarea ? textarea.value.trim() : '';
+                var file = attachmentInput && attachmentInput.files ? attachmentInput.files[0] : null;
 
-                if (!text || form.getAttribute('data-sending') === '1') {
+                if ((!text && !file) || form.getAttribute('data-sending') === '1') {
                     event.preventDefault();
                     return;
                 }
 
                 event.preventDefault();
                 form.setAttribute('data-sending', '1');
+                closeEmojiPalette();
 
                 if (sendButton) {
                     sendButton.disabled = true;
@@ -300,6 +418,10 @@
 
                 var body = new FormData();
                 body.append('message', text);
+
+                if (file) {
+                    body.append('attachment', file);
+                }
 
                 window.fetch(form.getAttribute('action'), {
                     method: 'POST',
@@ -322,6 +444,8 @@
                     if (textarea) {
                         textarea.value = '';
                     }
+
+                    clearAttachment();
 
                     return refreshThread(true);
                 }).catch(function (error) {
