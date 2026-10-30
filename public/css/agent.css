@@ -277,36 +277,286 @@ label { display: block; font-size: .82rem; font-weight: 600; color: var(--muted)
 .list { margin: .3rem 0 .6rem; padding-left: 1.1rem; font-size: .85rem; }
 
 /* ------------------------------------------------------------- Dashboard */
+/*
+ * Fase 1 de rediseño: todas las reglas de esta sección están limitadas a
+ * `.dashboard` para no afectar a otras pantallas que comparten clases base
+ * (.two-col y .panel se usan también en el perfil; .page__head en varias
+ * vistas). Los tokens (--radius, --primary, tonos semánticos, etc.) son los
+ * de :root y no se redefinen aquí.
+ */
 
-.stat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: .7rem;
-    margin-bottom: 1.1rem;
+/* Encabezado ------------------------------------------------------------- */
+
+.dashboard .dashboard__head {
+    margin-bottom: 1.15rem;
+    padding-bottom: .9rem;
+    border-bottom: 1px solid var(--border);
 }
 
-.stat {
+.dashboard .dashboard__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    margin: 0 0 .35rem;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--primary-dark);
+}
+
+.dashboard .dashboard__eyebrow::before {
+    content: "";
+    width: .5rem;
+    height: .5rem;
+    border-radius: 50%;
+    background: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.dashboard .dashboard__head h1 {
+    margin: 0 0 .25rem;
+    font-size: 1.55rem;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    color: var(--text);
+}
+
+.dashboard .dashboard__head .muted {
+    margin: 0;
+    max-width: 62ch;
+    font-size: .88rem;
+}
+
+/* Rejilla de tarjetas ---------------------------------------------------- */
+
+.dashboard .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .85rem;
+    margin-bottom: 1.25rem;
+}
+
+.dashboard .stat {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: .2rem;
-    padding: .8rem .9rem;
+    gap: .3rem;
+    min-width: 0;
+    padding: .9rem 1rem 1rem;
     border: 1px solid var(--border);
-    border-left: 4px solid var(--muted);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--text);
     box-shadow: var(--shadow);
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
 }
 
-.stat:hover { text-decoration: none; transform: translateY(-1px); }
-.stat__value { font-size: 1.6rem; font-weight: 700; }
-.stat__label { font-size: .8rem; color: var(--muted); }
+/* Barra superior de tono semántico (sustituye al borde izquierdo). */
+.dashboard .stat::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    border-radius: var(--radius) var(--radius) 0 0;
+    background: var(--stat-tone, var(--surface-3));
+}
 
-.stat--warn { border-left-color: var(--warn); }
-.stat--info { border-left-color: var(--info); }
-.stat--ok { border-left-color: var(--ok); }
-.stat--danger { border-left-color: var(--danger); }
-.stat--muted { border-left-color: var(--surface-3); }
+.dashboard .stat:hover {
+    text-decoration: none;
+    transform: translateY(-2px);
+    border-color: var(--surface-3);
+    box-shadow: 0 2px 4px rgba(16, 33, 47, .07), 0 14px 28px rgba(16, 33, 47, .1);
+}
+
+.dashboard .stat:focus-visible {
+    outline: 3px solid var(--primary);
+    outline-offset: 2px;
+    text-decoration: none;
+}
+
+.dashboard .stat__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    margin-bottom: .15rem;
+}
+
+.dashboard .stat--warn { --stat-tone: var(--warn); }
+.dashboard .stat--info { --stat-tone: var(--info); }
+.dashboard .stat--ok { --stat-tone: var(--ok); }
+.dashboard .stat--danger { --stat-tone: var(--danger); }
+.dashboard .stat--muted { --stat-tone: var(--muted); }
+
+.dashboard .stat__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--stat-tone, var(--muted));
+}
+
+.dashboard .stat__icon svg { width: 1.15rem; height: 1.15rem; display: block; }
+
+.dashboard .stat__arrow {
+    width: 1rem;
+    height: 1rem;
+    color: var(--muted);
+    opacity: 0;
+    transform: translate(-2px, 2px);
+    transition: opacity .15s ease, transform .15s ease;
+}
+
+.dashboard .stat:hover .stat__arrow,
+.dashboard .stat:focus-visible .stat__arrow { opacity: 1; transform: none; }
+
+.dashboard .stat__value {
+    font-size: 1.85rem;
+    font-weight: 700;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em;
+    color: var(--text);
+}
+
+.dashboard .stat__label {
+    font-size: .78rem;
+    line-height: 1.3;
+    color: var(--muted);
+}
+
+/* Tarjeta destacada: mensajes sin leer (2 columnas + fondo semántico). */
+.dashboard .stat--danger {
+    background: #fdf3f2;
+    border-color: #f2c4bd;
+}
+
+.dashboard .stat--danger .stat__icon {
+    background: #fdecea;
+    color: var(--danger);
+}
+
+.dashboard .stat--danger .stat__value {
+    font-size: 2.15rem;
+    color: var(--danger);
+}
+
+.dashboard .stat--danger .stat__label {
+    color: #8d4b43;
+    font-weight: 600;
+}
+
+.dashboard .stat--wide { grid-column: span 2; }
+
+/* Paneles de conversaciones ---------------------------------------------- */
+
+.dashboard .two-col {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.dashboard .panel {
+    padding: 0;
+    overflow: hidden;
+}
+
+.dashboard .panel__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    margin: 0;
+    padding: .8rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+}
+
+.dashboard .panel__head h2 {
+    margin: 0;
+    font-size: .95rem;
+    font-weight: 700;
+}
+
+.dashboard .panel__head .link {
+    flex: none;
+    font-size: .8rem;
+    font-weight: 600;
+}
+
+.dashboard .panel__head .link:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+    border-radius: 4px;
+    text-decoration: none;
+}
+
+/* Filas de conversación. */
+.dashboard .panel > .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    margin: 0;
+    padding: .65rem 1rem;
+    border-top: 1px solid var(--surface-2);
+    transition: background .12s ease, box-shadow .12s ease;
+}
+
+.dashboard .panel > .row:first-of-type { border-top: 0; }
+
+.dashboard .panel > .row:hover {
+    text-decoration: none;
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.dashboard .panel > .row:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+    text-decoration: none;
+}
+
+.dashboard .panel > .row .row__title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: .88rem;
+}
+
+.dashboard .panel > .row .row__meta {
+    flex: none;
+    gap: .5rem;
+    font-size: .75rem;
+}
+
+.dashboard .panel > .row .row__meta time {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.dashboard .panel > .empty {
+    margin: 0;
+    padding: 1.4rem 1rem;
+    font-size: .85rem;
+}
+
+.dashboard .panel__note {
+    margin: 0;
+    padding: .6rem 1rem;
+    border-top: 1px solid #f2e2c6;
+    background: #fdf7ec;
+    font-size: .8rem;
+    font-weight: 600;
+    color: var(--warn);
+}
 
 .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
 
@@ -940,6 +1190,388 @@ html.has-js .chat-reply__field textarea { resize: none; overflow-y: auto; }
     .chat-head { gap: .5rem; padding: .5rem .6rem; }
     .chat-head__actions { margin-left: 0; }
     .topnav { margin-left: 0; width: 100%; }
+
+    /* Dashboard: distribución propia para no heredar el grid de tablet. */
+    .dashboard .stat-grid { grid-template-columns: 1fr; gap: .7rem; }
+    .dashboard .stat--wide { grid-column: auto; }
+    .dashboard .two-col { grid-template-columns: 1fr; }
+    .dashboard .dashboard__head h1 { font-size: 1.35rem; }
+}
+
+/* Dashboard: escritorio cuatro columnas (base), tablet dos, móvil una.
+   `!important` se limita a la rejilla de tarjetas del Dashboard para que
+   prevalezca sobre las reglas de `.stat-grid` de los @media anteriores
+   independientemente del orden de cascada. */
+@media (min-width: 821px) and (max-width: 1150px) {
+    .dashboard .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+}
+
+@media (max-width: 820px) {
+    .dashboard .stat-grid { grid-template-columns: 1fr !important; }
 }
 
 
+
+/* ------------------------------------------------- Bandeja (Fase 2.1) */
+/*
+ * Rediseño de la bandeja de conversaciones.
+ *
+ * Ámbito:
+ *  - `.conv-item*` se estiliza sin prefijo porque ese bloque SOLO se usa en
+ *    `agent/conversations/_list.blade.php` (bandeja y sidebar del chat), de modo
+ *    que ambos contextos comparten exactamente la misma apariencia.
+ *  - Todo lo específico de la bandeja (encabezado, buscador, filtros, scroll y
+ *    placeholder) va prefijado con `.workspace--inbox` para no tocar el sidebar
+ *    de la vista de conversación ni el hilo de mensajes.
+ *  - Los componentes compartidos (.badge, .chip, .unread, .pager, .empty) NO se
+ *    redefinen de forma global: solo se ajustan dentro de `.conv-item`.
+ */
+
+/* --- Encabezado de la bandeja ------------------------------------------- */
+
+.workspace--inbox .sidebar-head {
+    gap: .65rem;
+    padding: .85rem .9rem .75rem;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+}
+
+.workspace--inbox .search {
+    display: flex;
+    align-items: stretch;
+    gap: .4rem;
+}
+
+.workspace--inbox .search input[type="search"] {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    height: 2.35rem;
+    padding: 0 .8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-size: .85rem;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.workspace--inbox .search input[type="search"]::placeholder {
+    color: var(--muted);
+    opacity: 1;
+}
+
+.workspace--inbox .search input[type="search"]:hover { border-color: var(--surface-3); }
+
+.workspace--inbox .search .btn {
+    flex: none;
+    height: 2.35rem;
+    padding: 0 .85rem;
+    border-radius: var(--radius-sm);
+    font-size: .82rem;
+    font-weight: 600;
+}
+
+.workspace--inbox .search input[type="search"]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}
+
+/* Filtros: varias filas, sin recortes ni desplazamiento horizontal. */
+.workspace--inbox .filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+    margin: 0;
+    padding: .1rem 0 .15rem;
+    overflow: visible;
+}
+
+.workspace--inbox .filter-chips .chip-link {
+    flex: 0 0 auto;
+    padding: .3rem .75rem;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: .78rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.workspace--inbox .filter-chips .chip-link:hover {
+    border-color: var(--surface-3);
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.workspace--inbox .filter-chips .chip-link.is-active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(16, 33, 47, .12);
+}
+
+.workspace--inbox .filter-chips .chip-link:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+/* Resumen de la cola. */
+.workspace--inbox .sidebar-head .muted--sm {
+    margin: 0;
+    padding-top: .1rem;
+    font-size: .74rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.35;
+}
+
+/* Zona de scroll con barra discreta. */
+.workspace--inbox .sidebar-body {
+    scrollbar-width: thin;
+    scrollbar-color: var(--surface-3) transparent;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+    background: var(--surface);
+}
+
+.workspace--inbox .sidebar-body::-webkit-scrollbar { width: 9px; }
+
+.workspace--inbox .sidebar-body::-webkit-scrollbar-track { background: transparent; }
+
+.workspace--inbox .sidebar-body::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border: 2px solid var(--surface);
+    border-radius: 999px;
+}
+
+.workspace--inbox .sidebar-body::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+/* Placeholder lateral (sin conversación seleccionada). */
+.workspace--inbox .workspace__placeholder { padding: 2rem 1.35rem; }
+
+.workspace--inbox .placeholder h2 {
+    margin-bottom: .5rem;
+    font-size: 1.1rem;
+    color: var(--text);
+}
+
+.workspace--inbox .placeholder .muted {
+    max-width: 46ch;
+    margin: 0 auto .55rem;
+    font-size: .88rem;
+    line-height: 1.55;
+}
+
+.workspace--inbox .placeholder .muted:last-child {
+    margin-bottom: 0;
+    font-size: .82rem;
+    opacity: .85;
+}
+
+/* --- Tarjeta de conversación (bandeja y sidebar del chat) --------------- */
+
+.conv-item {
+    position: relative;
+    align-items: flex-start;
+    gap: .65rem;
+    padding: .7rem .85rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    transition: background .12s ease, box-shadow .12s ease;
+}
+
+.conv-item:last-child { border-bottom: 0; }
+
+.conv-item:hover {
+    background: var(--surface-2);
+    text-decoration: none;
+}
+
+.conv-item:active { background: var(--surface-3); }
+
+.conv-item:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+    text-decoration: none;
+    background: var(--surface-2);
+}
+
+.conv-item.is-active {
+    background: var(--primary-soft);
+    box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.conv-item.is-active:hover { background: var(--primary-soft); }
+
+/* Marca de "sin leer" a la derecha del nombre. */
+.conv-item:has(.unread) .conv-item__top strong { color: var(--text); }
+
+.conv-item:has(.unread)::after {
+    content: "";
+    position: absolute;
+    top: .82rem;
+    right: .5rem;
+    width: .4rem;
+    height: .4rem;
+    border-radius: 50%;
+    background: var(--danger);
+}
+
+.conv-item:has(.unread) { padding-right: 1.15rem; }
+
+/* Avatar. */
+.conv-item__avatar {
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: linear-gradient(140deg, var(--primary-soft), var(--surface-3));
+    color: var(--primary-dark);
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: .8rem;
+    letter-spacing: .02em;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .6);
+}
+
+.conv-item.is-active .conv-item__avatar {
+    background: linear-gradient(140deg, var(--primary), var(--primary-dark));
+    color: #fff;
+    border-color: var(--primary-dark);
+}
+
+/* Cuerpo de la tarjeta. */
+.conv-item__body {
+    display: flex;
+    flex-direction: column;
+    gap: .2rem;
+    min-width: 0;
+    flex: 1 1 auto;
+    padding-top: .1rem;
+}
+
+.conv-item__top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: .5rem;
+    min-width: 0;
+}
+
+.conv-item__top strong {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: .875rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conv-item__top time {
+    flex: none;
+    font-size: .7rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.conv-item__preview {
+    display: block;
+    max-width: 100%;
+    font-size: .79rem;
+    line-height: 1.35;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conv-item__preview em {
+    font-style: normal;
+    font-weight: 600;
+    color: var(--primary-dark);
+}
+
+.conv-item:has(.unread) .conv-item__preview {
+    color: var(--text);
+    font-weight: 500;
+}
+
+.conv-item__meta {
+    display: flex;
+    align-items: center;
+    gap: .3rem;
+    flex-wrap: wrap;
+    margin-top: .2rem;
+}
+
+/* Ajustes de insignias SOLO dentro de la tarjeta (no globales). */
+.conv-item .badge {
+    padding: .1rem .42rem;
+    font-size: .66rem;
+    letter-spacing: .01em;
+}
+
+.conv-item .chip {
+    padding: .08rem .42rem;
+    font-size: .66rem;
+    line-height: 1.45;
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--muted);
+}
+
+.conv-item .chip--warn {
+    background: #fdf7ec;
+    border-color: #f0d9ac;
+    color: var(--warn);
+}
+
+.conv-item .unread {
+    min-width: 19px;
+    height: 19px;
+    padding: 0 .38rem;
+    margin-left: auto;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: .68rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 1px 2px rgba(192, 57, 43, .28);
+}
+
+/* Estado vacío del listado. */
+.workspace .conv-list > .empty,
+.workspace .sidebar-body > .empty {
+    margin: 0;
+    padding: 2.25rem 1.25rem;
+    font-size: .85rem;
+    line-height: 1.5;
+}
+
+/* --- Responsive --------------------------------------------------------- */
+
+@media (max-width: 1150px) {
+    .workspace--inbox .sidebar-head { padding: .7rem .75rem .65rem; }
+    .conv-item { padding: .65rem .75rem; }
+    .conv-item:has(.unread) { padding-right: 1.05rem; }
+}
+
+@media (max-width: 820px) {
+    .workspace--inbox .sidebar-head { gap: .55rem; padding: .6rem .65rem; }
+    .workspace--inbox .search input[type="search"],
+    .workspace--inbox .search .btn { height: 2.6rem; }  /* objetivo táctil */
+    .conv-item { padding: .7rem .7rem; gap: .6rem; }
+    .conv-item__avatar { flex-basis: 38px; width: 38px; height: 38px; font-size: .76rem; }
+    .conv-item__top strong { font-size: .84rem; }
+    .conv-item:has(.unread)::after { top: .9rem; }
+}

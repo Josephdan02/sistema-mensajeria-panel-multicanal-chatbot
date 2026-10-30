@@ -28,6 +28,42 @@ class AgentInboxTest extends AgentTestCase
             ->assertSee('Esperando agente');
     }
 
+    public function test_inbox_opens_with_the_all_filter_when_none_is_requested(): void
+    {
+        $agent = $this->agent();
+
+        $this->conversation([
+            'user_identifier' => 'web-en-atencion',
+            'state' => ConversationState::ATTENDING,
+            'assigned_agent_id' => $agent->id,
+            'assigned_at' => now(),
+        ]);
+
+        $this->conversation([
+            'user_identifier' => 'web-bot-ocioso',
+            'state' => ConversationState::IDLE,
+        ]);
+
+        $response = $this->actingAs($agent)->get('/agent/conversations');
+
+        $response->assertOk()
+            // «Todas» es el filtro activo por defecto...
+            ->assertSee('is-active', false)
+            // ...y la lista incluye conversaciones de distintos estados.
+            ->assertSee('web-en-atencion')
+            ->assertSee('web-bot-ocioso');
+
+        $html = $response->getContent();
+
+        // Solo hay un chip activo y es el de «Todas» (Blade deja un espacio
+        // variable entre clases, por eso la expresión tolera espacios).
+        $this->assertSame(1, preg_match_all('/class="chip-link\s+is-active\s*"/', $html));
+        $this->assertMatchesRegularExpression(
+            '/class="chip-link\s+is-active\s*"[^>]*>Todas</',
+            $html
+        );
+    }
+
     public function test_inbox_filters_by_attending_state(): void
     {
         $agent = $this->agent();

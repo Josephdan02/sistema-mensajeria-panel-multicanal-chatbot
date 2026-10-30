@@ -37,7 +37,8 @@ class ConversationController extends Controller
     {
         Gate::authorize('viewAny', Conversation::class);
 
-        $filter = $this->resolveFilter($request->string('filter')->toString());
+        // Sin `?filter=` la bandeja abre en «Todas» (no en la cola de espera).
+        $filter = $this->resolveFilter($request->string('filter')->toString(), InboxService::FILTER_ALL);
         $search = $request->string('search')->toString();
 
         return view('agent.conversations.index', [
